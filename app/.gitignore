@@ -1,0 +1,23 @@
+# 构建产物
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# 签名文件
+*.jks
+*.keystore
+keystore.properties
+
+# 忽略所有 .so 库文件 (除了 jniLibs 里的)
+*.so
+!app/src/main/jniLibs/arm64-v8a/libmcilm_link.so
+
+# 系统生成
+Thumbs.db

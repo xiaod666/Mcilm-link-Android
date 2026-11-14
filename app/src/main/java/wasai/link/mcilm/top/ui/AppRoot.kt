@@ -1,0 +1,287 @@
+package wasai.link.mcilm.top.ui
+
+import android.Manifest
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import wasai.link.mcilm.top.link.MciLmNative
+import wasai.link.mcilm.top.service.LinkKeepAliveService
+import wasai.link.mcilm.top.ui.theme.McilmTheme
+import wasai.link.mcilm.top.ui.theme.NeonGreen
+import wasai.link.mcilm.top.viewmodel.AuthState
+import wasai.link.mcilm.top.viewmodel.*
+import wasai.link.mcilm.top.viewmodel.UiEvent
+
+@Composable
+fun AppRoot(vm: MainViewModel = viewModel()) {
+    val context = LocalContext.current
+    val state by vm.uiState.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
+    val navController = rememberNavController()
+
+    var isLibReady by remember { mutableStateOf(false) }
+    var fatalError by remember { mutableStateOf<String?>(null) }
+
+    // 全局保活弹窗控制
+    var showBackgroundDialog by remember { mutableStateOf(false) }
+
+    // 通知权限申请器
+    val requestNotificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { }
+
+    // ==================== 监听登录状态：只负责启停服务，不负责弹窗 ====================
+    LaunchedEffect(state.authState) {
+        if (state.authState == AuthState.Authenticated) {
+            // 启动前台保活服务
+            val serviceIntent = Intent(context, LinkKeepAliveService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(serviceIntent)
+            } else {
+                context.startService(serviceIntent)
+            }
+
+            // 申请通知权限
+            if (Build.VERSION.SDK_INT >= 33) {
+                val permission = Manifest.permission.POST_NOTIFICATIONS
+                if (ContextCompat.checkSelfPermission(context, permission) != PackageManager.PERMISSION_GRANTED) {
+                    requestNotificationPermissionLauncher.launch(permission)
+                }
+            }
+        } else if (state.authState == AuthState.Unauthenticated) {
+            // 退出登录时停止保活服务
+            context.stopService(Intent(context, LinkKeepAliveService::class.java))
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            MciLmNative.initFileLogging(context)
+            val result = MciLmNative.initialize(context)
+            if (result.fatalError != null) {
+                fatalError = result.fatalError
+            } else {
+                if (!result.warningMsg.isNullOrBlank()) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, result.warningMsg, Toast.LENGTH_LONG).show()
+                    }
+                }
+                isLibReady = true
+                vm.onLibraryReady()
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        vm.uiEvent.collect { event ->
+            when (event) {
+                is UiEvent.ShowSnackbar -> {
+                    launch {
+                        snackbarHostState.showSnackbar(
+                            message = event.message,
+                            duration = if (event.isLong) SnackbarDuration.Long else SnackbarDuration.Short
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(state.authState, isLibReady) {
+        if (isLibReady && state.authState == AuthState.Unauthenticated) {
+            val currentRoute = navController.currentBackStackEntry?.destination?.route
+            if (currentRoute != "login") {
+                navController.navigate("login") {
+                    popUpTo(navController.graph.startDestinationId) { inclusive = true }
+                    launchSingleTop = true
+                }
+            }
+        }
+    }
+
+    val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
+    var wasInSession by remember { mutableStateOf(false) }
+    LaunchedEffect(currentRoute, state.roomId, state.isHosting, state.isJoining) {
+        val inRoom = currentRoute == "host" || currentRoute == "join" || currentRoute == "room"
+        if (!inRoom) { wasInSession = false; return@LaunchedEffect }
+        val inSession = state.roomId != null || state.isHosting || state.isJoining
+        if (inSession) wasInSession = true
+        else if (wasInSession) {
+            navController.popBackStack("home", inclusive = false)
+            wasInSession = false
+        }
+    }
+
+    McilmTheme {
+        Scaffold(
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+            modifier = Modifier.fillMaxSize()
+        ) { paddingValues ->
+            Box(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
+                if (!isLibReady) {
+                    Column(
+                        modifier = Modifier.fillMaxSize().padding(24.dp),
+                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        if (fatalError == null) {
+                            CircularProgressIndicator(modifier = Modifier.size(48.dp), color = NeonGreen)
+                            Spacer(Modifier.height(16.dp))
+                            Text("正在校验内核与检查更新...", color = MaterialTheme.colorScheme.onBackground)
+                        } else {
+                            Text("启动失败", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleLarge)
+                            Spacer(Modifier.height(16.dp))
+                            Text(fatalError!!, color = MaterialTheme.colorScheme.onBackground, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                } else {
+                    if (state.isLoading) {
+                        AlertDialog(
+                            onDismissRequest = { },
+                            title = { Text("请稍候") },
+                            text = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                                    Spacer(Modifier.width(16.dp))
+                                    Text(state.loadingMsg)
+                                }
+                            },
+                            confirmButton = { }
+                        )
+                    }
+
+                    if (state.errorMsg != null) {
+                        AlertDialog(
+                            onDismissRequest = { vm.dismissError() },
+                            title = { Text("提示") },
+                            text = { Text(state.errorMsg!!) },
+                            confirmButton = { TextButton(onClick = { vm.retryLastAction() }) { Text("重试") } },
+                            dismissButton = { TextButton(onClick = { vm.dismissError() }) { Text("取消") } }
+                        )
+                    }
+
+                    NavHost(
+                        navController = navController,
+                        startDestination = if (state.authState == AuthState.Authenticated) "home" else "login"
+                    ) {
+                        composable("login") {
+                            LoginScreen(vm, onLoginSuccess = {
+                                navController.navigate("home") {
+                                    popUpTo("login") { inclusive = true }
+                                    launchSingleTop = true
+                                }
+
+                                // 【核心修改】只有手动点击登录成功后，才检查并弹窗！
+                                val prefs = context.getSharedPreferences("mci_settings", Context.MODE_PRIVATE)
+                                if (!prefs.getBoolean("battery_opt_dismissed", false)) {
+                                    showBackgroundDialog = true
+                                }
+                            })
+                        }
+                        composable("home") {
+                            HomeScreen(
+                                vm,
+                                onNavigateHost = { navController.navigate("host") },
+                                onNavigateJoin = { navController.navigate("join") },
+                                onNavigateSettings = { navController.navigate("settings") },
+                                onNavigateAnnouncements = { navController.navigate("announcements") },
+                                onNavigateActivity = { navController.navigate("activity") }
+                            )
+                        }
+                        composable("host") {
+                            HostScreen(vm, onBack = { navController.popBackStack() })
+                        }
+                        composable("join") {
+                            JoinScreen(vm, onBack = { navController.popBackStack() })
+                        }
+                        composable("room") {
+                            HostScreen(vm, onBack = { navController.popBackStack() })
+                        }
+                        composable("settings") {
+                            SettingsScreen(
+                                vm,
+                                onBack = { navController.popBackStack() },
+                                onNavigateAnnouncements = { navController.navigate("announcements") },
+                                onNavigateActivity = { navController.navigate("activity") },
+                                onNavigateInvite = { navController.navigate("invite") },
+                                onNavigateFeedback = { navController.navigate("feedback") }
+                            )
+                        }
+                        composable("announcements") {
+                            AnnouncementsScreen(vm, onBack = { navController.popBackStack() })
+                        }
+                        composable("activity") {
+                            ActivityScreen(vm, onBack = { navController.popBackStack() })
+                        }
+                        composable("invite") {
+                            InviteScreen(vm, onBack = { navController.popBackStack() })
+                        }
+                        composable("feedback") {
+                            FeedbackScreen(vm, onBack = { navController.popBackStack() })
+                        }
+                    }
+                }
+
+                // ==================== 全局保活引导弹窗 ====================
+                if (showBackgroundDialog) {
+                    BackgroundSettingsDialog(
+                        onDismiss = {
+                            showBackgroundDialog = false
+                            // 点“暂不开启”：记住状态，以后不弹
+                            context.getSharedPreferences("mci_settings", Context.MODE_PRIVATE)
+                                .edit().putBoolean("battery_opt_dismissed", true).apply()
+                        },
+                        onConfirm = {
+                            showBackgroundDialog = false
+                            // 点“去设置”：记住状态，以后不弹
+                            context.getSharedPreferences("mci_settings", Context.MODE_PRIVATE)
+                                .edit().putBoolean("battery_opt_dismissed", true).apply()
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
