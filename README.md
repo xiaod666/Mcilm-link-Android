@@ -6,7 +6,7 @@
 
 - **应用名称**：Mcilm-link 安卓版
 - **包名 Namespace**：`wasai.link.mcilm.top`（发布后不可更改）
-- **版本号**：`1.4.0` (versionCode 7)
+- **版本号**：`1.4.1-beta` (versionCode 8)
 - **ABI 支持**：仅支持 `arm64-v8a`（不提供 32 位 ARM、x86、x86_64 兜底）
 - **最低支持**：Android 7.0 (API 24)
 - **目标版本**：Android 14 (targetSdk 34)
@@ -19,7 +19,7 @@
 - **本地存储**：EncryptedSharedPreferences (持久化 Token)
 - **Native 桥接**：C++ JNI (动态 dlopen/dlsym)
 - **音频引擎**：AudioRecord/AudioTrack (16kHz/mono/16-bit LE PCM)
-- **后台保活**：Foreground Service (前台服务) + 电池优化忽略引导
+- **后台保活**：Foreground Service (前台服务) + 电池优化忽略与自启动双重引导
 - **日志管理**：外部私有存储持久化 (自动脱敏、防注入截断、东八区时区强制、支持导出分享)
 - **辅助功能**：二维码生成与扫码 (ZXing / ScanContract)、智能正则解析、SHA-256 加密校验
 
@@ -29,10 +29,10 @@
      ├── data
      │    ├── TokenManager.kt          - 加密存储 Token（支持轮换强制覆盖）
      │    ├── AudioEngine.kt           - 语音采集播放引擎（AEC + NS，线程安全）
-     │    ├── NativeLibraryManager.kt  - 内核动态库 API 下载、ELF校验、防崩溃熔断
+     │    ├── NativeLibraryManager.kt  - 内核动态库 API 下载、ELF校验、防崩溃熔断、旧库备份回滚
      │    └── LogFileManager.kt        - 本地日志脱敏、防注入截断与异步写入
      ├── service
-     │    └── LinkKeepAliveService.kt  - [新增] 前台保活服务（防止后台强杀断联）
+     │    └── LinkKeepAliveService.kt  - 前台保活服务（防止后台强杀断联）
      ├── link
      │    └── MciLmNative.kt           - 核心 JNI 声明、事件分发、音频回调、日志流
      ├── network
@@ -42,59 +42,67 @@
      ├── ui
      │    ├── AppRoot.kt               - 全局路由、启动内核加载页、全局弹窗、保活监听
      │    ├── LoginScreen.kt           - 登录页 (带隐私协议勾选)
-     │    ├── HomeScreen.kt            - 主页 (创建加入、公开房列表、铃铛红点)
-     │    ├── HostScreen.kt            - 房主开房页 (踢人语音控制排障参数)
-     │    ├── JoinScreen.kt            - 访客加入页 (扫码语音开关强制中继)
+     │    ├── HomeScreen.kt            - 主页 (创建加入、公开房列表、铃铛红点、日志 FAB)
+     │    ├── HostScreen.kt            - 房主开房页 (踢人、语音控制、默认机型命名)
+     │    ├── JoinScreen.kt            - 访客加入页 (平铺极简设计，高级设置折叠入开发者)
      │    ├── SettingsScreen.kt        - 设置页 (内核App版本、开发者模式、平台功能入口)
-     │    ├── AnnouncementsScreen.kt   - [新增] 公告页（响应式邮箱式分栏布局）
-     │    ├── ActivityScreen.kt        - [新增] 活动中心页（一键领取时长）
-     │    ├── InviteScreen.kt          - [新增] 邀请好友页（二维码、链接分享）
-     │    ├── FeedbackScreen.kt        - [新增] 意见反馈页（提交与历史查看）
-     │    ├── BackgroundSettingsDialog.kt - [新增] 电池优化与自启动引导弹窗
-     │    ├── HtmlContent.kt           - [新增] WebView 渲染富文本（公告/活动用）
+     │    ├── AnnouncementsScreen.kt   - 公告页（响应式邮箱式分栏布局）
+     │    ├── ActivityScreen.kt        - 活动中心页（一键领取时长）
+     │    ├── InviteScreen.kt          - 邀请好友页（二维码、链接分享）
+     │    ├── FeedbackScreen.kt        - 意见反馈页（提交与历史查看）
+     │    ├── BackgroundSettingsDialog.kt - 电池优化与自启动双重引导弹窗
+     │    ├── HtmlContent.kt           - WebView 渲染富文本（公告/活动用）
      │    ├── ChatComponents.kt        - 聊天复用组件 (气泡、底栏、文件进度)
      │    ├── CommonComponents.kt      - 日志面板、日志导出分享、全局公共组件
      │    └── theme/Theme.kt           - 暗黑科技主题
      ├── viewmodel
      │    ├── MainViewModel.kt         - 状态机核心骨架，持有 UiState 和核心变量
-     │    ├── MainViewModel_Network.kt - [模块化] 网络、登录、节点解析与签到
-     │    ├── MainViewModel_Event.kt   - [模块化] 底层事件订阅与聊天文件事件分流
-     │    ├── MainViewModel_Room.kt    - [模块化] 房主访客联机控制、断线重连
-     │    ├── MainViewModel_Chat.kt    - [模块化] 聊天收发、语音启停、成员踢人
-     │    ├── MainViewModel_File.kt    - [模块化] 文件同步、SAF 导出、本地打开
-     │    └── MainViewModel_Platform.kt- [新增] 公告、活动、邀请、反馈业务逻辑
+     │    ├── MainViewModel_Network.kt - 网络登录、节点解析、签到与断网缓冲期
+     │    ├── MainViewModel_Event.kt   - 底层事件订阅与聊天文件事件分流
+     │    ├── MainViewModel_Room.kt    - 房主访客联机控制、断线重连与异步等待
+     │    ├── MainViewModel_Chat.kt    - 聊天收发、语音启停、成员踢人
+     │    ├── MainViewModel_File.kt    - 文件同步、SAF 导出、缓存自动清理
+     │    └── MainViewModel_Platform.kt- 公告、活动、邀请、反馈业务逻辑
      └── cpp
           ├── native-lib.cpp           - JNI C++ 封装，处理底层回调、音频注入与线程挂载
-          └── CMakeLists.txt           - 构建配置 (仅包含 dl/log)
+          └── CMakeLists.txt           - 构建配置 (仅包含 dl/log/android)
 
 ## 四、 核心机制说明
 
 ### 1. 全局后台保活机制 (Foreground Service)
 - 在用户登录成功后，自动启动 `LinkKeepAliveService`（声明为 `dataSync` 类型）。
-- 首次登录会弹出引导框（`BackgroundSettingsDialog`），引导用户关闭电池优化并允许自启动（该弹窗只需点一次，后续永久静默）。
+- 首次登录会弹出引导框（`BackgroundSettingsDialog`），引导用户关闭电池优化并尝试跳转自启动白名单（弹窗仅弹一次，后续静默）。
 - 确保用户在锁屏、切换应用时，底层 UDP/QUIC 打洞与心跳不会被系统冻结。
 
 ### 2. 计费闭环与权益控制 (Billing & Limits)
 - **静默签到**：登录成功及开房前自动调用 `/api/user/checkin`，彻底解决用户余额为 0 却不知为何不能开房的问题。
 - **权益硬拦截**：开房输入人数时，与 `roomMax` 联动。普通用户输入超出权益（如 999 人），直接无法输入并弹出 Toast。
 - **耗尽警告**：在房巡检发现 `can_host=false` 时，顶部弹出红色横幅“时长耗尽，新玩家无法加入”，但不断开已有玩家。
+- **双保险**：客户端 UX 硬拦截 + SDK 内部校验兜底，签到接口幂等（400 already 忽略）。
 
 ### 3. 网络抗波动与防假死机制 (Network Resilience)
-- **断网缓冲期**：网络丢失给出 5 秒缓冲期，无缝续连。
+- **断网 5 秒缓冲**：网络丢失时不再瞬间断开联机，而是给出 5 秒缓冲期。期间网络恢复则无缝续连，超时才主动清理状态。
 - **底层假死检测**：巡检协程每 3 秒拉取一次状态，连续 15 秒无响应则触发重连。
 - **重连防撞库**：断线时强制调用 `linkStop` 杀死底层协程，重连循环增加 3 秒退避。
+- **开房异步等待**：开房成功后依赖 `CompletableDeferred` 等待底层 `room` 事件返回，房间号秒出秒进，杜绝盲目硬等。
 
 ### 4. 平台生态与富文本渲染 (Platform Ecosystem)
 - **邮箱式公告**：在宽屏（≥600dp）下自动分栏为左侧列表、右侧 WebView 详情；手机端为列表到详情的单页流转，未读带绿点。
 - **活动与邀请**：主页带有可领取的活动 Banner；邀请支持复制短链与展示二维码。
+- **节点名称映射**：依赖 `/api/user/nodes` 获取映射，UI 显示中文节点名；`/api/user/connect` 已彻底废弃。
 
-### 5. 交互防抖与保护 (UX Protection)
+### 5. 交互防抖与 UI 保护 (UX Protection)
 - **防连点**：ViewModel 层引入 500ms 动作锁。
 - **返回键拦截**：在 Loading 状态拦截物理返回键，防止产生“幽灵房间”。
+- **开发者折叠**：加入房间的「强制中继」、「优先多跳」等排障参数默认隐藏，需激活开发者模式才可见。
+- **UI 降噪**：主页顶部仅保留“公告、设置”，运行日志改为右下角悬浮按钮，退出登录移入设置页。
 
 ### 6. 现代文件同步体验 (SAF)
-- 接收文件时拉起 `CreateDocument` 选择目录，后台搬运私有目录文件。
-- 支持文件取消与本地打开。
+- 接收文件时拉起 `CreateDocument` 选择目录，后台搬运私有目录文件，支持取消与本地打开。
+- 发送文件后 5 分钟自动清理 `cacheDir` 中的 `outgoing_` 临时缓存，防止用户手机存储被悄悄吃满。
+
+### 7. 动态库热更新安全兜底
+- 下载新 `.so` 库后，先重命名为 `.bak` 备份；替换成功才删备份，替换失败自动回滚，彻底避免因替换异常导致用户跌回内置库的严重问题。
 
 ## 五、 编译与运行指南
 
@@ -106,6 +114,7 @@
 ### 构建步骤
 1. 打开项目，等待 Gradle Sync 完成。
 2. 确保 `app/src/main/jniLibs/arm64-v8a` 目录下存在：`libmcilm_link.so`。
+   *(注：若下载的是官方产物 `MciLm-link-android-arm64.so`，需重命名为 `libmcilm_link.so`。外置动态库在运行时由 `NativeLibraryManager` 下载后自动重命名映射。)*
 3. 点击 `Build - Make Project`。
 4. 准备一台真机设备（arm64 架构）运行应用。
 
@@ -116,25 +125,60 @@
 **已完成（v1.4.x）：**
 - [x] 语音联机接入与状态同步 (`link_set_audio`)。
 - [x] Minecraft 局域网广播 (`link_set_extra`)。
-- [x] 文件同步 SAF 自选目录、进度与打开。
-- [x] 网络抗波动（打洞流量细分、断网缓冲、重连防竞态）。
-- [x] 房主踢人、聊天控制面板。
+- [x] 文件同步 SAF 自选目录、进度、打开与缓存清理。
+- [x] 网络抗波动（断网缓冲期、重连防竞态、异步开房等待）。
+- [x] 房主踢人、聊天控制面板、默认机型命名。
 - [x] 架构解耦（ViewModel 拆分）。
 - [x] 平台生态接入：公告、活动领取、邀请好友、使用反馈。
-- [x] 后台保活前台服务与首次登录引导。
+- [x] 后台保活前台服务与自启动双重引导。
 - [x] 计费与时长完整性闭环（静默签到、权益拦截、耗尽横幅）。
 - [x] 扫码组件升级 (`ScanContract`)。
+- [x] UI 降噪重构（FAB、悬浮角标、开发者模式折叠）。
+- [x] 深度 Bug 修复（动态库热更新回滚、防内存/磁盘泄漏、通知栏图标）。
 
 **待办：**
 - [ ] 节点延迟监控 UI 渲染（目前仅通过 `link_set_log` 日志解析，未做成状态栏面板）。
 - [ ] 多设备适配：小米/OPPO/vivo 等国产 ROM 的 AEC（回声消除）特殊兼容性回归测试。
 - [ ] 大文件传输：文件断点续传与分块传输（依赖底层引擎支持）。
 
-
-
-
+---
 
 # MciLm-link安卓版 更新日志
+
+## [1.4.1-beta] - 2026-11-14
+**核心主题：主页 UI 降噪重构、深度代码审查修复与联机链路全面优化**
+
+### 🚀 新增与优化
+- **主页 UI 降噪重构**：
+  - 精简了主页顶部的拥挤图标，仅保留「公告」与「设置」，释放顶部空间。
+  - 「运行日志」由顶部图标改为右下角的**悬浮按钮（FAB）**，确保在排查问题时随时触达，且不占主界面空间。
+  - 将「退出登录」功能从主页移入「设置」页底部，并增加了二次确认弹窗，防止用户误触。
+- **全局消息角标重绘**：
+  - 废弃了官方原有的 `Badge` 组件（在部分自定义主题下易产生多边形变形）。
+  - 全面手写 `Box` + `RoundedCornerShape(percent = 50)` 绘制逻辑，完美解决角标变形问题。
+  - 统一了主页铃铛与设置页列表的角标样式，确保单数字（正圆）、双数字（胶囊）在任何分辨率下都不被截断，文字完美居中。
+- **断网缓冲期实装**：网络断开（如切网、Wi-Fi 短暂丢失）时不再瞬间强断联机，而是给出 **5 秒缓冲期**。期间网络恢复无缝续连，超时才清理状态并提示。
+- **开房/加房等待机制重构**：
+  - 开房成功（`rc=0`）后不再盲目硬等 5 秒，改为依赖 `CompletableDeferred` 等待底层 `room` 事件返回（最多 6 秒），房间号秒出即秒进。
+  - 访客加房成功后，针对本地端口与聊天模式读取增加了 3 次短轮询兜底，彻底解决偶发读取不到实际端口、退化为 `25565` 的问题。
+- **加入房间界面重构（JoinScreen）**：
+  - 移除原先多余的卡片嵌套，完全采用与「创建房间」一致的平铺极简布局。
+  - 「高级设置」（强制中继、优先多跳）作为排障参数，现已**默认隐藏**，需在设置页激活「开发者模式」后才可见。
+  - 开关样式、分割线与配色与全局深色主题完美对齐。
+- **日志与初始化时机**：日志系统 `LogFileManager` 初始化时机提前至 `MainActivity.onCreate()` 最早期，杜绝 App 刚启动时的日志丢失。
+- **权限引导闭环**：后台保活引导弹窗点击「去设置」后，除跳转电池优化外，会延迟 600ms 尝试拉起国产 ROM 的自启动管理页，提高保活成功率。
+
+### 🐛 关键 Bug 修复
+- **修复编译报错**：修复了 `SettingsScreen.kt` 在引入自定义角标时缺失 `androidx.compose.foundation.background` 导致的编译报错。
+- **[P0] 修复内核热更新替换失败导致降级**：`NativeLibraryManager` 下载新库后，先重命名为 `.bak` 备份，替换成功才删备份，替换失败自动回滚，避免因 `renameTo` 失败导致用户跌回内置库的严重问题。
+- **[P1] 修复成员列表人数过多撑爆弹窗**：在 `HostScreen` 的成员管理弹窗中为 `LazyColumn` 增加 `heightIn(max = 320.dp)` 限制。
+- **[P1] 修复发送文件后 `cacheDir` 泄漏**：发送文件后延迟 5 分钟自动清理 `outgoing_` 临时缓存，防止用户手机存储被悄悄吃满。
+- **[P2] 修复通知栏保活图标违和**：将原本的蓝牙图标替换为系统下载图标，避免用户误解。
+- **[P2] 清理废弃接口**：彻底移除已经废弃的 `/api/user/connect` 相关网络实体与 Retrofit 方法。
+- **[P2] 放宽房间 ID 正则**：`HomeScreen` 的 `isValidRoomId` 正则补充了下划线 `_` 兼容，防止官方未来调整 ID 格式导致误拦截。
+- **[P2] 默认开房名称优化**：开房默认名称由硬编码的「测试服:生存」改为动态读取手机型号（如 `Xiaomi 14的服务器:生存`），避免用户直接开房后撞名。
+
+---
 
 ## [1.4.0] - 2026-11-14
 **核心主题：开房链路闭环、平台生态接入与全局保活机制**
