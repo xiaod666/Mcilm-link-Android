@@ -21,3 +21,5 @@ keystore.properties
 
 # 系统生成
 Thumbs.db
+# 直接忽略整个 .idea 文件夹
+.idea/

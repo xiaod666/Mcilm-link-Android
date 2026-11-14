@@ -22,13 +22,17 @@ local.properties
 /captures
 
 # -----------------------------------
-# 3. C++ / NDK 编译缓存
+# 3. C++ / NDK 编译缓存与动态库
 # -----------------------------------
 .externalNativeBuild
 .cxx
 obj/
 *.o
 *.a
+
+# 忽略所有 .so 库文件，但强制保留核心引擎库
+*.so
+!app/src/main/jniLibs/arm64-v8a/libmcilm_link.so
 
 # -----------------------------------
 # 4. 签名与安全配置 (绝对不要提交到 Git)
@@ -45,3 +49,6 @@ signingConfig.properties
 *.hprof
 *.swp
 Thumbs.db
+
+# 直接忽略整个 .idea 文件夹
+.idea/
