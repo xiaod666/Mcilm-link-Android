@@ -9,7 +9,7 @@ import android.net.NetworkRequest
 import androidx.core.content.edit
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job // 补充 import
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -28,15 +28,13 @@ internal fun MainViewModel.registerNetworkCallback() {
         override fun onAvailable(network: Network) {
             if (wasOffline) {
                 wasOffline = false
-                networkLostJob?.cancel() // 【P1-1 修复】网络恢复，取消断开倒计时
+                networkLostJob?.cancel()
                 _uiEvent.tryEmit(UiEvent.ShowSnackbar("网络已恢复"))
             }
         }
         override fun onLost(network: Network) {
             wasOffline = true
             _uiEvent.tryEmit(UiEvent.ShowSnackbar("网络连接已断开，5 秒缓冲期...", isLong = true))
-
-            // 【P1-1 修复】5 秒缓冲期，不立即断开
             networkLostJob?.cancel()
             networkLostJob = viewModelScope.launch {
                 delay(5000L)
@@ -51,7 +49,9 @@ internal fun MainViewModel.registerNetworkCallback() {
     connectivityManager.registerNetworkCallback(networkRequest, cb)
 }
 
-internal fun MainViewModel.login(account: String, password: String) {
+// ==================== 登录与账号 ====================
+
+internal fun MainViewModel.login(account: String, password: String, rememberMe: Boolean, isSilent: Boolean = false) {
     if (account.isBlank() || password.isBlank()) {
         _uiState.value = _uiState.value.copy(errorMsg = "账号密码不能为空")
         return
@@ -62,6 +62,19 @@ internal fun MainViewModel.login(account: String, password: String) {
         try {
             val result = repo.loginAndGetPermanentToken(account, password)
             result.onSuccess {
+                if (isSilent) {
+                    // 静默登录成功后，只更新免密登录时间，不重置 10 天有效期
+                    tokenManager.updateAutoLoginTime(account)
+                } else {
+                    // 手动登录
+                    if (rememberMe) {
+                        // 重新记录，重置 3 天免密期和 10 天总有效期
+                        tokenManager.saveRememberedAccount(account, password)
+                    } else {
+                        tokenManager.removeRememberedAccount(account)
+                    }
+                }
+
                 _uiState.value = _uiState.value.copy(authState = AuthState.Authenticated, isLoading = false)
                 silentCheckInAndRefreshBalance()
                 refreshSponsor()
@@ -77,6 +90,28 @@ internal fun MainViewModel.login(account: String, password: String) {
         }
     }
 }
+
+// 一键静默登录指定账号
+internal fun MainViewModel.loginWithSpecificAccount(account: String) {
+    val accounts = tokenManager.getRememberedAccounts()
+    val target = accounts.find { it.account == account }
+    if (target == null) {
+        _uiEvent.tryEmit(UiEvent.ShowSnackbar("该账号密码记录已失效"))
+        return
+    }
+    login(target.account, target.password, rememberMe = false, isSilent = true)
+}
+
+// 切换账号（清除当前 Token 回到登录页）
+internal fun MainViewModel.switchAccount() {
+    logout()
+}
+
+internal fun MainViewModel.removeRememberedAccount(account: String) {
+    tokenManager.removeRememberedAccount(account)
+}
+
+// ==================== 额度与签到 ====================
 
 internal fun MainViewModel.refreshBalance() {
     viewModelScope.launch {
@@ -134,6 +169,8 @@ internal fun MainViewModel.checkIn() {
         _uiState.value = _uiState.value.copy(isLoading = false)
     }
 }
+
+// ==================== 房间与节点 ====================
 
 internal fun MainViewModel.fetchPublicRooms() {
     viewModelScope.launch {

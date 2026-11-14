@@ -56,7 +56,7 @@ internal fun MainViewModel.startHost(
             applyExtraParams(minecraftPort)
             val effectiveFeatures = ensureAudioForHost(features)
 
-            // 【P1-2 修复】使用 CompletableDeferred 等待 room 事件
+            // 使用 CompletableDeferred 等待 room 事件
             val roomDeferred = CompletableDeferred<Boolean>()
             reconnectDeferred = roomDeferred
 
@@ -123,7 +123,7 @@ internal fun MainViewModel.startClient(
                 }
                 _uiState.value = _uiState.value.copy(errorMsg = "加入失败:\n${getFriendlyError(cleanError)}", isJoining = false, isLoading = false)
             } else {
-                // 【P1-3 修复】轮询获取实际端口与聊天模式
+                // 轮询获取实际端口与聊天模式
                 var mode = "text"
                 var actualPort = ports
                 repeat(3) {
@@ -216,17 +216,23 @@ internal fun MainViewModel.logout() {
 internal fun MainViewModel.retryLastAction() {
     if (isClickTooFast()) return
     _uiState.value = _uiState.value.copy(errorMsg = null)
-    if (_uiState.value.authState == AuthState.Unauthenticated && lastLoginParams != null) login(lastLoginParams!!.first, lastLoginParams!!.second)
-    else if (lastHostParams != null) startHost(
-        lastHostParams!!.roomMeta, lastHostParams!!.features, lastHostParams!!.ports,
-        lastHostParams!!.pass, lastHostParams!!.isPublic, lastHostParams!!.mode,
-        lastHostParams!!.server, lastHostParams!!.minecraftPort, lastHostParams!!.sni, lastHostParams!!.plain
-    )
-    else if (lastJoinParams != null) startClient(
-        lastJoinParams!!.roomId, lastJoinParams!!.ports, lastJoinParams!!.pass,
-        lastJoinParams!!.mode, lastJoinParams!!.server,
-        lastJoinParams!!.sni, lastJoinParams!!.plain, lastJoinParams!!.forceRelay, lastJoinParams!!.preferPeers
-    )
+
+    if (_uiState.value.authState == AuthState.Unauthenticated && lastLoginParams != null) {
+        // 👇 修复编译报错，补上 rememberMe 参数
+        login(lastLoginParams!!.first, lastLoginParams!!.second, rememberMe = false)
+    } else if (lastHostParams != null) {
+        startHost(
+            lastHostParams!!.roomMeta, lastHostParams!!.features, lastHostParams!!.ports,
+            lastHostParams!!.pass, lastHostParams!!.isPublic, lastHostParams!!.mode,
+            lastHostParams!!.server, lastHostParams!!.minecraftPort, lastHostParams!!.sni, lastHostParams!!.plain
+        )
+    } else if (lastJoinParams != null) {
+        startClient(
+            lastJoinParams!!.roomId, lastJoinParams!!.ports, lastJoinParams!!.pass,
+            lastJoinParams!!.mode, lastJoinParams!!.server,
+            lastJoinParams!!.sni, lastJoinParams!!.plain, lastJoinParams!!.forceRelay, lastJoinParams!!.preferPeers
+        )
+    }
 }
 
 internal fun MainViewModel.applyExtraParams(minecraftPort: String) {

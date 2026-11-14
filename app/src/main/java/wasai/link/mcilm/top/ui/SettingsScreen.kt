@@ -1,7 +1,8 @@
 package wasai.link.mcilm.top.ui
 
-import androidx.compose.foundation.background
 import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -73,8 +74,9 @@ fun SettingsScreen(
     var tokenInput by remember { mutableStateOf("") }
     var tokenVisible by remember { mutableStateOf(false) }
 
-    // [新增] 退出登录确认弹窗
+    // ==================== 弹窗控制状态 ====================
     var showLogoutDialog by remember { mutableStateOf(false) }
+    var showSwitchAccountDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(clickCount) {
         if (clickCount > 0) {
@@ -103,6 +105,7 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
+            // ==================== 应用信息 ====================
             Text("应用信息", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = NeonGreen)
             Spacer(Modifier.height(16.dp))
             Card(colors = CardDefaults.cardColors(containerColor = DarkSurface), shape = RoundedCornerShape(12.dp)) {
@@ -154,18 +157,10 @@ fun SettingsScreen(
                         title = "意见反馈",
                         onClick = onNavigateFeedback
                     )
-
-                    // [新增] 退出登录
-                    HorizontalDivider(color = Color.DarkGray)
-                    PlatformEntryRow(
-                        title = "退出登录",
-                        titleColor = MaterialTheme.colorScheme.error, // 使用红色警示
-                        onClick = { showLogoutDialog = true }
-                    )
                 }
             }
-            // ==================== 平台功能结束 ====================
 
+            // ==================== 内核信息 ====================
             Spacer(Modifier.height(24.dp))
             Text("内核信息", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = NeonGreen)
             Spacer(Modifier.height(16.dp))
@@ -213,6 +208,7 @@ fun SettingsScreen(
                 }
             }
 
+            // ==================== 高级配置 (仅开发者可见) ====================
             if (state.isDevMode) {
                 Spacer(Modifier.height(24.dp))
                 Text("高级配置", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = NeonGreen)
@@ -260,8 +256,40 @@ fun SettingsScreen(
                         ) { Text("轮换持久 Token (旧值立即失效)") }
                     }
                 }
-                Spacer(Modifier.height(32.dp))
             }
+
+            // ==================== 退出登录与切换账号 (移至最底部) ====================
+            Spacer(Modifier.height(48.dp))
+
+            // 1. 退出登录（纯色红底，白字）
+            Button(
+                onClick = { showLogoutDialog = true },
+                modifier = Modifier.fillMaxWidth().height(50.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error,
+                    contentColor = Color.White
+                )
+            ) {
+                Text("退出登录", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            // 2. 切换账号（红边红字）
+            OutlinedButton(
+                onClick = { showSwitchAccountDialog = true },
+                modifier = Modifier.fillMaxWidth().height(50.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error
+                ),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
+            ) {
+                Text("切换账号", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            }
+
+            Spacer(Modifier.height(32.dp)) // 底部安全留白
         }
     }
 
@@ -283,6 +311,26 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showLogoutDialog = false }) { Text("取消") }
+            }
+        )
+    }
+
+    // 切换账号弹窗
+    if (showSwitchAccountDialog) {
+        AlertDialog(
+            onDismissRequest = { showSwitchAccountDialog = false },
+            title = { Text("切换账号") },
+            text = { Text("退出当前账号并返回登录页？如果之前勾选了“记住密码”，可以直接一键登录切回该账号。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showSwitchAccountDialog = false
+                    vm.switchAccount()
+                }) {
+                    Text("确认切换", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSwitchAccountDialog = false }) { Text("取消") }
             }
         )
     }
@@ -376,7 +424,7 @@ private fun PlatformEntryRow(
     title: String,
     subtitle: String? = null,
     badgeText: String? = null,
-    titleColor: Color = Color.White, // [新增] 允许自定义标题颜色
+    titleColor: Color = Color.White,
     onClick: () -> Unit
 ) {
     Row(
