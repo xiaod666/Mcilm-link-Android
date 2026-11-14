@@ -1,16 +1,10 @@
 package wasai.link.mcilm.top.ui
 
-import android.Manifest
-import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -23,16 +17,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
-import wasai.link.mcilm.top.ui.theme.DarkSurface
 import wasai.link.mcilm.top.ui.theme.NeonGreen
 import wasai.link.mcilm.top.viewmodel.*
 import wasai.link.mcilm.top.viewmodel.ServerMode
@@ -42,6 +34,7 @@ import wasai.link.mcilm.top.viewmodel.ServerMode
 fun JoinScreen(vm: MainViewModel, onBack: () -> Unit) {
     val state by vm.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
 
     var roomIdInput by remember { mutableStateOf("") }
     var passwordInput by remember { mutableStateOf("") }
@@ -49,7 +42,7 @@ fun JoinScreen(vm: MainViewModel, onBack: () -> Unit) {
     var preferPeers by remember { mutableStateOf(false) }
     var passwordVisible by remember { mutableStateOf(false) }
 
-    // 新版 ZXing 扫码结果回调
+    // ZXing 扫码结果回调
     val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
         if (result.contents != null) {
             val raw = result.contents.trim()
@@ -64,8 +57,6 @@ fun JoinScreen(vm: MainViewModel, onBack: () -> Unit) {
     }
 
     var pendingJoinAction by remember { mutableStateOf<(() -> Unit)?>(null) }
-
-    // 麦克风预请求
     val preJoinMicLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         pendingJoinAction?.invoke()
         pendingJoinAction = null
@@ -79,6 +70,7 @@ fun JoinScreen(vm: MainViewModel, onBack: () -> Unit) {
     val canSubmit = isRoomIdValid && !state.isLoading
 
     val trySubmit = {
+        focusManager.clearFocus()
         var targetRoom = roomIdInput.trim()
         var targetPass = passwordInput.trim()
 
@@ -103,10 +95,11 @@ fun JoinScreen(vm: MainViewModel, onBack: () -> Unit) {
                 )
             }
 
+            // 预留麦克风预检接口
             val needMic = false
             if (needMic) {
                 pendingJoinAction = doJoin
-                preJoinMicLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                preJoinMicLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
             } else {
                 doJoin()
             }
@@ -136,109 +129,126 @@ fun JoinScreen(vm: MainViewModel, onBack: () -> Unit) {
         ) {
             Spacer(Modifier.height(16.dp))
 
-            Card(
-                colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    OutlinedTextField(
-                        value = roomIdInput,
-                        onValueChange = {
-                            if (it.contains(" pass:")) {
-                                val parts = it.split(" pass:")
-                                roomIdInput = parts[0]
-                                passwordInput = parts.getOrElse(1) { "" }
-                            } else {
-                                roomIdInput = checkLimit(it.replace("\n", ""), 80)
-                            }
-                        },
-                        label = { Text("房间 ID") },
-                        placeholder = { Text("输入房间号或扫码") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        trailingIcon = {
-                            IconButton(onClick = {
-                                val options = ScanOptions().apply {
-                                    setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-                                    setPrompt("扫描房间二维码")
-                                    setBeepEnabled(false)
-                                    setOrientationLocked(false)
-                                }
-                                scanLauncher.launch(options)
-                            }) {
-                                Icon(Icons.Default.QrCodeScanner, contentDescription = "扫码", tint = NeonGreen)
-                            }
-                        },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = NeonGreen,
-                            cursorColor = NeonGreen,
-                            focusedLabelColor = NeonGreen
-                        )
-                    )
-
-                    OutlinedTextField(
-                        value = passwordInput,
-                        onValueChange = { passwordInput = checkLimit(it.replace("\n", ""), 20) },
-                        label = { Text("房间密码（如有）") },
-                        singleLine = true,
-                        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                        trailingIcon = {
-                            IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                                Icon(if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility, contentDescription = null)
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = NeonGreen,
-                            cursorColor = NeonGreen,
-                            focusedLabelColor = NeonGreen
-                        )
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(24.dp))
-            Text("高级设置", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
-            Spacer(Modifier.height(12.dp))
-
-            Card(
-                colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Column {
-                            Text("强制中继模式", color = Color.White)
-                            Text("跳过 P2P 打洞，适用于打洞失败时", color = Color.Gray, fontSize = 12.sp)
-                        }
-                        Switch(checked = forceRelay, onCheckedChange = { forceRelay = it }, enabled = !state.isLoading)
+            // 房间 ID
+            OutlinedTextField(
+                value = roomIdInput,
+                onValueChange = {
+                    if (it.contains(" pass:")) {
+                        val parts = it.split(" pass:")
+                        roomIdInput = parts[0]
+                        passwordInput = parts.getOrElse(1) { "" }
+                    } else {
+                        roomIdInput = checkLimit(it.replace("\n", ""), 80)
                     }
-                    HorizontalDivider(color = Color.DarkGray, modifier = Modifier.padding(vertical = 12.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Column {
-                            Text("优先多跳连接", color = Color.White)
-                            Text("优先尝试通过其他访客中转", color = Color.Gray, fontSize = 12.sp)
+                },
+                label = { Text("房间 ID") },
+                placeholder = { Text("输入房间号或扫码") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                trailingIcon = {
+                    IconButton(onClick = {
+                        val options = ScanOptions().apply {
+                            setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                            setPrompt("扫描房间二维码")
+                            setBeepEnabled(false)
+                            setOrientationLocked(false)
                         }
-                        Switch(checked = preferPeers, onCheckedChange = { preferPeers = it }, enabled = !state.isLoading)
+                        scanLauncher.launch(options)
+                    }) {
+                        Icon(Icons.Default.QrCodeScanner, contentDescription = "扫码", tint = NeonGreen)
+                    }
+                },
+                enabled = !state.isLoading
+            )
+
+            Spacer(Modifier.height(16.dp))
+
+            // 房间密码
+            OutlinedTextField(
+                value = passwordInput,
+                onValueChange = { passwordInput = checkLimit(it.replace("\n", ""), 20) },
+                label = { Text("房间密码（如有）") },
+                singleLine = true,
+                visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                trailingIcon = {
+                    IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                        Icon(
+                            if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                            contentDescription = "切换密码可见性"
+                        )
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !state.isLoading
+            )
+
+            // ==================== 开发者模式专属：高级设置 ====================
+            if (state.isDevMode) {
+                Spacer(Modifier.height(24.dp))
+
+                Text(
+                    "高级设置",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+
+                // 强制中继
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+                ) {
+                    Switch(
+                        checked = forceRelay,
+                        onCheckedChange = { forceRelay = it },
+                        enabled = !state.isLoading
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Column {
+                        Text("强制中继模式", color = Color.White)
+                        Text("跳过 P2P 打洞，适用于打洞失败时", color = Color.Gray, fontSize = 12.sp)
+                    }
+                }
+
+                HorizontalDivider(color = Color.DarkGray.copy(alpha = 0.5f))
+
+                // 优先多跳
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+                ) {
+                    Switch(
+                        checked = preferPeers,
+                        onCheckedChange = { preferPeers = it },
+                        enabled = !state.isLoading
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Column {
+                        Text("优先多跳连接", color = Color.White)
+                        Text("优先尝试通过其他访客中转", color = Color.Gray, fontSize = 12.sp)
                     }
                 }
             }
 
             Spacer(Modifier.height(32.dp))
+
+            // 加入房间按钮
             Button(
                 onClick = { trySubmit() },
                 modifier = Modifier.fillMaxWidth().height(50.dp),
-                enabled = canSubmit,
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = NeonGreen,
-                    contentColor = Color.Black
-                )
+                enabled = canSubmit
             ) {
-                Text("加入房间", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                if (state.isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Text("加入房间", style = MaterialTheme.typography.titleMedium)
+                }
             }
+
             Spacer(Modifier.height(24.dp))
         }
     }

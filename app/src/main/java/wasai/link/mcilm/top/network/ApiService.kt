@@ -6,7 +6,6 @@ import retrofit2.http.GET
 import retrofit2.http.Header
 import retrofit2.http.POST
 import retrofit2.http.Path
-import retrofit2.http.Query
 
 interface ApiService {
     @POST("/api/auth/sso/login")
@@ -33,13 +32,6 @@ interface ApiService {
     @GET("/api/public/linkm/rooms")
     suspend fun getPublicRooms(): PublicRoomsResponse
 
-    @GET("/api/user/connect")
-    suspend fun getConnectInfo(
-        @Header("Authorization") bearerToken: String,
-        @Query("room_id") roomId: String,
-        @Query("ip") ip: String
-    ): ConnectResponse
-
     @GET("/api/user/nodes")
     suspend fun getUserNodes(@Header("Authorization") bearerToken: String): UserNodesResponse
 
@@ -48,8 +40,6 @@ interface ApiService {
 
     @POST("/api/user/token")
     suspend fun rotateToken(@Header("Authorization") bearerToken: String): RotateTokenResponse
-
-    // ==================== 公告 ====================
 
     @GET("/api/user/announcements")
     suspend fun getAnnouncements(@Header("Authorization") bearerToken: String): AnnouncementsResponse
@@ -60,8 +50,6 @@ interface ApiService {
         @Path("id") id: Int
     ): Response<Unit>
 
-    // ==================== 活动 ====================
-
     @GET("/api/user/activities")
     suspend fun getActivities(@Header("Authorization") bearerToken: String): ActivitiesResponse
 
@@ -71,8 +59,6 @@ interface ApiService {
         @Path("id") id: Int
     ): ClaimActivityResponse
 
-    // ==================== 邀请 ====================
-
     @GET("/api/user/invite")
     suspend fun getInvite(@Header("Authorization") bearerToken: String): InviteResponse
 
@@ -81,8 +67,6 @@ interface ApiService {
         @Header("Authorization") bearerToken: String,
         @Body request: BindInviteRequest
     ): BindInviteResponse
-
-    // ==================== 反馈 ====================
 
     @POST("/api/user/feedback")
     suspend fun submitFeedback(

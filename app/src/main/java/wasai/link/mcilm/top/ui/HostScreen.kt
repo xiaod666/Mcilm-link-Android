@@ -150,7 +150,8 @@ fun HostScreen(vm: MainViewModel, onBack: () -> Unit) {
         } else text
     }
 
-    var roomMeta by rememberSaveable { mutableStateOf("测试服:生存") }
+    // 【P2-3 修复】默认值改用手机型号
+    var roomMeta by rememberSaveable { mutableStateOf("${android.os.Build.MODEL}的服务器:生存") }
     var maxOnline by rememberSaveable { mutableStateOf("5") }
     var hostPort by rememberSaveable { mutableStateOf("25565") }
     var hostPassword by rememberSaveable { mutableStateOf("") }
@@ -604,7 +605,8 @@ fun HostScreen(vm: MainViewModel, onBack: () -> Unit) {
             onDismissRequest = { showMemberDialog = false },
             title = { Text("成员管理") },
             text = {
-                LazyColumn {
+                // 【P1-5 修复】加高度限制
+                LazyColumn(modifier = Modifier.heightIn(max = 320.dp)) {
                     items(state.members) { member ->
                         Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Column {

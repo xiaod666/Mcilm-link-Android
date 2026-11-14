@@ -9,7 +9,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
-import wasai.link.mcilm.top.MainActivity // 换成你的主 Activity
+import wasai.link.mcilm.top.MainActivity
 
 class LinkKeepAliveService : Service() {
 
@@ -25,7 +25,6 @@ class LinkKeepAliveService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // 用户从通知栏点击“停止”
         if (intent?.action == ACTION_STOP) {
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
@@ -33,7 +32,6 @@ class LinkKeepAliveService : Service() {
         }
 
         val notification = buildNotification()
-        // Android 14 必须显式指定 FOREGROUND_SERVICE_TYPE_DATA_SYNC
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(
                 NOTIFICATION_ID,
@@ -44,7 +42,6 @@ class LinkKeepAliveService : Service() {
             startForeground(NOTIFICATION_ID, notification)
         }
 
-        // START_STICKY：被系统杀掉后尝试重建（国产 ROM 可能拦截，但这是标准做法）[reference:5]
         return START_STICKY
     }
 
@@ -74,7 +71,6 @@ class LinkKeepAliveService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // 点击通知回到 App
         val contentIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
@@ -86,7 +82,8 @@ class LinkKeepAliveService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Mcilm 联机助手")
             .setContentText("联机会话正在后台保持")
-            .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth) // 替换为你自己的图标
+            // 【P2-8 修复】换成了通用的数据传输图标
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setContentIntent(contentPendingIntent)
             .addAction(0, "停止保活", stopPendingIntent)
             .setOngoing(true)

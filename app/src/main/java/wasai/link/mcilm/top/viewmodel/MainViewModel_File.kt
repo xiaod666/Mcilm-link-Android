@@ -1,13 +1,14 @@
 package wasai.link.mcilm.top.viewmodel
 
-import android.app.Application // 👈 关键修复
+import android.app.Application
 import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.core.content.FileProvider
-import androidx.lifecycle.viewModelScope // 👈 关键修复
+import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch // 👈 关键修复
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import wasai.link.mcilm.top.link.MciLmNative
 import java.io.File
@@ -99,9 +100,20 @@ internal fun MainViewModel.sendFile(uri: Uri) {
         MciLmNative.logApp("准备发送文件: ${cacheFile.absolutePath}")
         val res = MciLmNative.linkCommand("fs send ${cacheFile.absolutePath}") ?: ""
         MciLmNative.logApp("发送结果: $res")
+
+        // 【P1-4 修复】发送结束后，延迟清理缓存文件
         if (res.contains("没有开启") || res.contains("未启用") || res.contains("方向") || res.contains("不支持")) {
             _uiState.value = _uiState.value.copy(isFileSyncSupported = false)
             _uiEvent.tryEmit(UiEvent.ShowSnackbar("房主未开启此方向的文件同步", isLong = true))
+            if (cacheFile.exists()) cacheFile.delete()
+        } else {
+            launch {
+                delay(300_000L) // 延迟 5 分钟清理
+                if (cacheFile.exists()) {
+                    cacheFile.delete()
+                    MciLmNative.logApp("清理发送缓存: ${cacheFile.name}")
+                }
+            }
         }
     }
 }

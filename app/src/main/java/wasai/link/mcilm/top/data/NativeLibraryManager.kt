@@ -18,7 +18,6 @@ import java.util.concurrent.TimeUnit
 class NativeLibraryManager(private val context: Context) {
     private val tag = "NativeLibManager"
 
-    // true: 模拟器 / 非 arm64 环境强制使用 APK 内置库（x86 翻译层跑 ARM64 极易 SIGILL）
     private val blockUpdateOnEmulator = true
 
     private val client = OkHttpClient.Builder()
@@ -66,16 +65,8 @@ class NativeLibraryManager(private val context: Context) {
     }
 
     private fun verifyElf(file: File): Boolean {
-        // 修复 P1-7：去掉 10MB 硬下限（一旦官方裁剪产物就会全体误杀），
-        // 改为 ≥ 100KB 防 HTML 错误页；上限 50MB 防劫持。
-        if (!file.exists() || file.length() < 100L * 1024) {
-            Log.e(tag, "文件大小异常（过小，疑似错误页）: ${file.length()} bytes")
-            return false
-        }
-        if (file.length() > 50L * 1024 * 1024) {
-            Log.e(tag, "文件大小异常（过大，疑似劫持）: ${file.length()} bytes")
-            return false
-        }
+        if (!file.exists() || file.length() < 100L * 1024) return false
+        if (file.length() > 50L * 1024 * 1024) return false
         return try {
             RandomAccessFile(file, "r").use { raf ->
                 val header = ByteArray(64)
@@ -86,19 +77,14 @@ class NativeLibraryManager(private val context: Context) {
                 val machine = (header[18].toInt() and 0xFF) or ((header[19].toInt() and 0xFF) shl 8)
                 if (machine != 0xB7) return false // 必须 AArch64
                 val eType = (header[16].toInt() and 0xFF) or ((header[17].toInt() and 0xFF) shl 8)
-                if (eType != 3) {
-                    Log.e(tag, "拦截：文件不是动态链接库 (e_type=$eType)")
-                    return false
-                }
+                if (eType != 3) return false
                 true
             }
         } catch (e: Exception) {
-            Log.e(tag, "ELF verify error", e)
             false
         }
     }
 
-    // 修复 P1-6：只信任 link.mcilm.top 及其子域
     private fun isTrustedDownloadUrl(url: String): Boolean {
         return try {
             val uri = URI(url)
@@ -107,14 +93,6 @@ class NativeLibraryManager(private val context: Context) {
         } catch (_: Exception) { false }
     }
 
-    /**
-     * 修复 P0-4：本函数不再写 is_attempting。
-     * is_attempting 必须由 MciLmNative.initialize 在 initLibrary 前一刻设置，
-     * 否则「下载 / 网络请求期间进程被杀」会被错误计为「内核崩溃」，
-     * 连续 3 次后强制回退内置库，用户完全无感但版本倒退。
-     *
-     * 返回值 path：本次要尝试加载的私有库路径（null = 走 APK 内置库）。
-     */
     suspend fun prepareNativeLibrary(): LoadResult = withContext(Dispatchers.IO) {
         val privateFile = File(context.filesDir, "lib/libmcilm_link.so")
 
@@ -136,14 +114,12 @@ class NativeLibraryManager(private val context: Context) {
             warningMsg = "检测到内核连续启动异常，已自动为您回退到安全版本。"
         }
 
-        // 只写 load_fail_count；is_attempting 由 MciLmNative 在加载前设置
         prefs.edit { putInt("load_fail_count", failCount) }
 
         val localVersion = prefs.getString("last_kernel_version", "0.0.0") ?: "0.0.0"
         val currentPath = if (privateFile.exists()) privateFile.absolutePath else null
 
         if (blockUpdateOnEmulator && isEmulatorOrUnsupportedArch()) {
-            Log.w(tag, "⚠️ 拦截开关已开启，检测到模拟器环境，跳过私有库下载，强制使用内置库。")
             return@withContext LoadResult(null, null, null)
         }
 
@@ -155,7 +131,6 @@ class NativeLibraryManager(private val context: Context) {
             var onlineVersion = ""
             var downloadUrl = ""
 
-            // 修复 P1-4：Response.use 自动 close，避免连接 / 流泄漏
             val apiOk = client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     warningMsg = (warningMsg ?: "") + "\n检查更新失败(网络异常)，使用当前版本。"
@@ -171,12 +146,10 @@ class NativeLibraryManager(private val context: Context) {
 
             if (downloadUrl.isNotEmpty() && compareVersion(onlineVersion, localVersion) > 0) {
                 if (!isTrustedDownloadUrl(downloadUrl)) {
-                    Log.e(tag, "下载 URL 不在白名单: $downloadUrl")
                     warningMsg = (warningMsg ?: "") + "\n下载源校验失败，已保护退出。"
                     return@withContext LoadResult(currentPath, warningMsg, null)
                 }
 
-                Log.d(tag, "Found new version: $onlineVersion, downloading...")
                 val tmpFile = File(context.filesDir, "lib/libmcilm_link.so.tmp")
                 tmpFile.parentFile?.mkdirs()
                 if (tmpFile.exists()) tmpFile.delete()
@@ -184,7 +157,6 @@ class NativeLibraryManager(private val context: Context) {
                 val dlRequest = Request.Builder().url(downloadUrl).build()
                 val downloadOk = client.newCall(dlRequest).execute().use { dl ->
                     if (!dl.isSuccessful) {
-                        Log.e(tag, "下载失败: HTTP ${dl.code}")
                         false
                     } else {
                         dl.body?.byteStream()?.use { input ->
@@ -200,25 +172,27 @@ class NativeLibraryManager(private val context: Context) {
                 }
 
                 if (tmpFile.exists() && verifyElf(tmpFile)) {
-                    if (privateFile.exists()) privateFile.delete()
+                    // 【P0-2 修复】先备份旧库，失败可回滚
+                    val bakFile = File(context.filesDir, "lib/libmcilm_link.so.bak")
+                    if (bakFile.exists()) bakFile.delete()
+                    if (privateFile.exists()) privateFile.renameTo(bakFile)
+
                     if (tmpFile.renameTo(privateFile)) {
+                        if (bakFile.exists()) bakFile.delete()
                         privateFile.setReadable(true, true)
                         privateFile.setExecutable(true, true)
-                        if (Build.VERSION.SDK_INT >= 34) privateFile.setReadOnly() // Safer DCL
-                        Log.d(tag, "✅ 下载成功，校验通过。下次冷启动生效。")
+                        if (Build.VERSION.SDK_INT >= 34) privateFile.setReadOnly()
                         prefs.edit { putString("last_kernel_version", onlineVersion) }
                     } else {
-                        Log.e(tag, "renameTo 失败")
+                        if (bakFile.exists()) bakFile.renameTo(privateFile)
                         warningMsg = (warningMsg ?: "") + "\n内核替换失败，使用当前版本。"
                     }
                 } else {
-                    Log.e(tag, "❌ 文件校验失败，丢弃。")
                     if (tmpFile.exists()) tmpFile.delete()
                     warningMsg = (warningMsg ?: "") + "\n最新内核下载校验失败，已保护退出。"
                 }
             }
         } catch (e: Exception) {
-            Log.e(tag, "Update check failed, ignoring.", e)
             warningMsg = (warningMsg ?: "") + "\n网络不稳定，更新检查被跳过。"
         }
 
@@ -232,7 +206,6 @@ class NativeLibraryManager(private val context: Context) {
         }
     }
 
-    /** 修复 P0-4 配套：由 MciLmNative 在 initLibrary 前一刻调用 */
     fun markAttempting() {
         prefs.edit { putBoolean("is_attempting", true) }
     }

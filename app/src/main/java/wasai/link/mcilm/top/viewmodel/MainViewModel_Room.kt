@@ -43,10 +43,9 @@ internal fun MainViewModel.startHost(
         val recentLogs = mutableListOf<String>()
         val logJob = launch { MciLmNative.logs.collect { recentLogs.add(it); if (recentLogs.size > 10) recentLogs.removeAt(0) } }
         try {
-            // [改动] 兜底签到：登录后已静默签过，这里防 init 时签到失败；失败不阻断
             repo.checkIn().onFailure { MciLmNative.logApp("开房前兜底签到失败(不阻断): ${it.message}") }
             val timeRes = repo.getRoomTime().getOrElse { e ->
-                if (handleAuthError(e)) return@launch // [新增] 401 拦截
+                if (handleAuthError(e)) return@launch
                 _uiState.value = _uiState.value.copy(isLoading = false, errorMsg = "查询额度失败: ${e.message}")
                 return@launch
             }
@@ -56,6 +55,10 @@ internal fun MainViewModel.startHost(
             if (server.isEmpty()) { MciLmNative.linkSetDiscovery(token, _uiState.value.discoveryThreshold) }
             applyExtraParams(minecraftPort)
             val effectiveFeatures = ensureAudioForHost(features)
+
+            // 【P1-2 修复】使用 CompletableDeferred 等待 room 事件
+            val roomDeferred = CompletableDeferred<Boolean>()
+            reconnectDeferred = roomDeferred
 
             val rc = MciLmNative.linkHostStart(server, roomMeta, "", finalPass, effectiveFeatures, ports, sni, if(plain) 1 else 0)
             if (rc != 0) {
@@ -72,8 +75,9 @@ internal fun MainViewModel.startHost(
                 }
                 _uiState.value = _uiState.value.copy(errorMsg = "开房失败:\n${getFriendlyError(cleanError)}", isLoading = false)
             } else {
-                delay(5000.milliseconds)
-                if (_uiState.value.roomId == null) {
+                // 等待房间事件返回，最多等 6 秒
+                val success = withTimeoutOrNull(6000L) { roomDeferred.await() } ?: false
+                if (!success && _uiState.value.roomId == null) {
                     _uiState.value = _uiState.value.copy(isLoading = false, errorMsg = "内核已就绪，但房间号未返回，请查看日志")
                 }
             }
@@ -119,13 +123,22 @@ internal fun MainViewModel.startClient(
                 }
                 _uiState.value = _uiState.value.copy(errorMsg = "加入失败:\n${getFriendlyError(cleanError)}", isJoining = false, isLoading = false)
             } else {
-                delay(300.milliseconds)
-                var mode = "text"; var actualPort = ports
-                try {
-                    val o = JSONObject(MciLmNative.linkQuery("status") ?: "")
-                    o.optJSONObject("chat")?.let { mode = it.optString("mode", "text") }
-                    o.optJSONArray("local_ports")?.let { if (it.length() > 0 && actualPort.isBlank()) actualPort = it.optString(0) }
-                } catch (_: Exception) {}
+                // 【P1-3 修复】轮询获取实际端口与聊天模式
+                var mode = "text"
+                var actualPort = ports
+                repeat(3) {
+                    try {
+                        val o = JSONObject(MciLmNative.linkQuery("status") ?: "")
+                        o.optJSONObject("chat")?.let { mode = it.optString("mode", "text") }
+                        o.optJSONArray("local_ports")?.let {
+                            if (it.length() > 0 && actualPort.isBlank()) {
+                                actualPort = it.optString(0)
+                            }
+                        }
+                        if (actualPort.isNotBlank()) return@repeat
+                    } catch (_: Exception) {}
+                    delay(300.milliseconds)
+                }
                 if (actualPort.isBlank()) actualPort = "25565"
 
                 var voiceActive = false
@@ -185,7 +198,7 @@ internal fun MainViewModel.stopSession() {
         isHosting = false, isJoining = false, roomId = null, roomPassword = null,
         members = emptyList(), serverEndpoint = null, localPort = null, chatHistory = emptyList(),
         trafficUp = 0L, trafficDown = 0L, trafficPunchUp = 0L, trafficPunchDown = 0L, isVoiceActive = false,
-        isTimeExhausted = false   // [改动] 会话结束后复位
+        isTimeExhausted = false
     )
     viewModelScope.launch(Dispatchers.IO) { MciLmNative.linkStop() }
 }

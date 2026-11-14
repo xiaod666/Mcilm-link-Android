@@ -5,6 +5,7 @@ package wasai.link.mcilm.top.network
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
+// ==================== 基础认证 ====================
 @Serializable
 data class LoginRequest(val account: String, val password: String)
 
@@ -14,6 +15,7 @@ data class LoginResponse(val token: String)
 @Serializable
 data class MeResponse(@SerialName("api_token") val apiToken: String)
 
+// ==================== 房间/计费 ====================
 @Serializable
 data class RoomTimeResponse(
     @SerialName("wallet_seconds") val walletSeconds: Long = 0L,
@@ -46,6 +48,7 @@ data class SponsorResponse(
     @SerialName("can_public_room") val canPublicRoom: Boolean = false
 )
 
+// ==================== 公开房间/节点 ====================
 @Serializable
 data class PublicRoomsResponse(
     val rooms: List<PublicRoom> = emptyList()
@@ -58,13 +61,6 @@ data class PublicRoom(
     @SerialName("node") val node: String? = null,
     @SerialName("players") val players: Int = 0,
     @SerialName("max_players") val maxPlayers: Int = 0
-)
-
-@Serializable
-data class ConnectResponse(
-    @SerialName("conn_key") val connKey: String = "",
-    val ip: String = "",
-    val port: Int = 0
 )
 
 @Serializable
@@ -94,6 +90,7 @@ data class RotateTokenResponse(
     @SerialName("token_created_at") val tokenCreatedAt: String = "",
     val hint: String = ""
 )
+
 // ==================== 平台能力：公告 / 活动 / 邀请 / 反馈 ====================
 
 @Serializable

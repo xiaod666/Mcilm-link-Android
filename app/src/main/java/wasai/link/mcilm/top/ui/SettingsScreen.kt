@@ -1,5 +1,6 @@
 package wasai.link.mcilm.top.ui
 
+import androidx.compose.foundation.background
 import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -39,7 +40,6 @@ import kotlin.time.Duration.Companion.seconds
 fun SettingsScreen(
     vm: MainViewModel,
     onBack: () -> Unit,
-    // [新增] 平台功能入口回调（默认空 lambda，向后兼容旧调用）
     onNavigateAnnouncements: () -> Unit = {},
     onNavigateActivity: () -> Unit = {},
     onNavigateInvite: () -> Unit = {},
@@ -55,7 +55,7 @@ fun SettingsScreen(
         kernelVersion = MciLmNative.linkVersion() ?: "未知版本"
     }
 
-    // [新增] 进设置页拉一次平台数据（用于角标提示）
+    // 进设置页拉一次平台数据（用于角标提示）
     LaunchedEffect(Unit) {
         vm.fetchAnnouncements(silent = true)
         vm.fetchActivities()
@@ -72,6 +72,9 @@ fun SettingsScreen(
     var showTokenDialog by remember { mutableStateOf(false) }
     var tokenInput by remember { mutableStateOf("") }
     var tokenVisible by remember { mutableStateOf(false) }
+
+    // [新增] 退出登录确认弹窗
+    var showLogoutDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(clickCount) {
         if (clickCount > 0) {
@@ -116,7 +119,7 @@ fun SettingsScreen(
                 }
             }
 
-            // ==================== [新增] 平台功能 ====================
+            // ==================== 平台功能 ====================
             Spacer(Modifier.height(24.dp))
             Text("平台功能", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = NeonGreen)
             Spacer(Modifier.height(16.dp))
@@ -129,14 +132,14 @@ fun SettingsScreen(
                         onClick = onNavigateAnnouncements
                     )
                     HorizontalDivider(color = Color.DarkGray)
-                    // 活动中心（有未领取才显示角标）
+                    // 活动中心
                     val unclaimedCount = state.activities.count { !it.claimed }
                     PlatformEntryRow(
                         title = "活动中心",
                         badgeText = if (unclaimedCount > 0) "$unclaimedCount" else null,
                         onClick = onNavigateActivity
                     )
-                    // 邀请好友：功能未开启时隐藏
+                    // 邀请好友
                     if (state.inviteInfo?.settings?.enabled == true) {
                         HorizontalDivider(color = Color.DarkGray)
                         PlatformEntryRow(
@@ -150,6 +153,14 @@ fun SettingsScreen(
                     PlatformEntryRow(
                         title = "意见反馈",
                         onClick = onNavigateFeedback
+                    )
+
+                    // [新增] 退出登录
+                    HorizontalDivider(color = Color.DarkGray)
+                    PlatformEntryRow(
+                        title = "退出登录",
+                        titleColor = MaterialTheme.colorScheme.error, // 使用红色警示
+                        onClick = { showLogoutDialog = true }
                     )
                 }
             }
@@ -254,6 +265,28 @@ fun SettingsScreen(
         }
     }
 
+    // ==================== 弹窗区域 ====================
+
+    // 退出登录弹窗
+    if (showLogoutDialog) {
+        AlertDialog(
+            onDismissRequest = { showLogoutDialog = false },
+            title = { Text("退出登录") },
+            text = { Text("确认要退出当前账号吗？") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showLogoutDialog = false
+                    vm.logout()
+                }) {
+                    Text("确认", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLogoutDialog = false }) { Text("取消") }
+            }
+        )
+    }
+
     if (showDevDialog) {
         AlertDialog(
             onDismissRequest = { showDevDialog = false; devKeyInput = ""; showDevKey = false },
@@ -337,12 +370,13 @@ fun SettingsScreen(
     }
 }
 
-// ==================== [新增] 平台功能入口行组件 ====================
+// ==================== 平台功能入口行组件 ====================
 @Composable
 private fun PlatformEntryRow(
     title: String,
     subtitle: String? = null,
     badgeText: String? = null,
+    titleColor: Color = Color.White, // [新增] 允许自定义标题颜色
     onClick: () -> Unit
 ) {
     Row(
@@ -350,30 +384,39 @@ private fun PlatformEntryRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(Modifier.weight(1f)) {
-            Text(title, color = Color.White)
+            Text(title, color = titleColor, fontSize = 15.sp)
             if (subtitle != null) {
-                Text(subtitle, color = Color.Gray, fontSize = 12.sp)
+                Text(subtitle, color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
             }
         }
+
         if (badgeText != null) {
-            Surface(
-                color = MaterialTheme.colorScheme.error,
-                shape = RoundedCornerShape(10.dp)
+            Box(
+                modifier = Modifier
+                    .defaultMinSize(minWidth = 18.dp, minHeight = 18.dp)
+                    .background(
+                        color = MaterialTheme.colorScheme.error,
+                        shape = RoundedCornerShape(percent = 50)
+                    )
+                    .padding(horizontal = 5.dp, vertical = 1.dp),
+                contentAlignment = Alignment.Center
             ) {
                 Text(
-                    badgeText,
+                    text = badgeText,
                     color = Color.White,
-                    fontSize = 11.sp,
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    lineHeight = 10.sp
                 )
             }
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(10.dp))
         }
+
         Icon(
             Icons.AutoMirrored.Filled.ArrowForwardIos,
             contentDescription = null,
-            tint = Color.Gray,
-            modifier = Modifier.size(14.dp)
+            tint = Color.DarkGray,
+            modifier = Modifier.size(12.dp)
         )
     }
 }

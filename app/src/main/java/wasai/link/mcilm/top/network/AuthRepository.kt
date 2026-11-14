@@ -100,12 +100,6 @@ class AuthRepository(tokenManager: TokenManager) {
         catch (e: Exception) { Result.failure(handleException(e)) }
     }
 
-    suspend fun getConnectInfo(roomId: String, ip: String): Result<ConnectResponse> {
-        val token = getLocalToken() ?: return Result.failure(Exception("未登录"))
-        return try { Result.success(api.getConnectInfo("Bearer $token", roomId, ip)) }
-        catch (e: Exception) { Result.failure(handleException(e)) }
-    }
-
     suspend fun getUserNodes(): Result<UserNodesResponse> {
         val token = getLocalToken() ?: return Result.failure(Exception("未登录"))
         return try { Result.success(api.getUserNodes("Bearer $token")) }

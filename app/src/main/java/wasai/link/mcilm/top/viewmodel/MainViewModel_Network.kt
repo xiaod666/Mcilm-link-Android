@@ -9,6 +9,7 @@ import android.net.NetworkRequest
 import androidx.core.content.edit
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job // 补充 import
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -27,13 +28,23 @@ internal fun MainViewModel.registerNetworkCallback() {
         override fun onAvailable(network: Network) {
             if (wasOffline) {
                 wasOffline = false
+                networkLostJob?.cancel() // 【P1-1 修复】网络恢复，取消断开倒计时
                 _uiEvent.tryEmit(UiEvent.ShowSnackbar("网络已恢复"))
             }
         }
         override fun onLost(network: Network) {
             wasOffline = true
-            _uiEvent.tryEmit(UiEvent.ShowSnackbar("网络连接已断开...", isLong = true))
-            if (_uiState.value.isHosting || _uiState.value.isJoining) stopSession()
+            _uiEvent.tryEmit(UiEvent.ShowSnackbar("网络连接已断开，5 秒缓冲期...", isLong = true))
+
+            // 【P1-1 修复】5 秒缓冲期，不立即断开
+            networkLostJob?.cancel()
+            networkLostJob = viewModelScope.launch {
+                delay(5000L)
+                if (wasOffline && (_uiState.value.isHosting || _uiState.value.isJoining)) {
+                    _uiEvent.tryEmit(UiEvent.ShowSnackbar("网络持续断开，已结束联机", isLong = true))
+                    stopSession()
+                }
+            }
         }
     }
     networkCallback = cb
@@ -52,8 +63,8 @@ internal fun MainViewModel.login(account: String, password: String) {
             val result = repo.loginAndGetPermanentToken(account, password)
             result.onSuccess {
                 _uiState.value = _uiState.value.copy(authState = AuthState.Authenticated, isLoading = false)
-                silentCheckInAndRefreshBalance()   // 登录成功即静默签到 + 拉余额
-                refreshSponsor()                    // 同步权益人数上限
+                silentCheckInAndRefreshBalance()
+                refreshSponsor()
                 fetchPublicRooms()
                 fetchNodeNames()
             }.onFailure { e ->
@@ -80,12 +91,6 @@ internal fun MainViewModel.refreshBalance() {
     }
 }
 
-/**
- * 静默签到 + 刷新余额（登录成功 / 自动登录时调用）。
- * 关键点：签到和拉余额都在【同一个 launch 内】完成，不层叠调用 refreshBalance()。
- * 400 already 已由 AuthRepository 视为成功，不阻断。
- * 遇 401 立即踢回登录页，不再白跑后续请求。
- */
 internal fun MainViewModel.silentCheckInAndRefreshBalance() {
     viewModelScope.launch {
         val checkInResult = repo.checkIn()
@@ -103,10 +108,6 @@ internal fun MainViewModel.silentCheckInAndRefreshBalance() {
     }
 }
 
-/**
- * 同步赞助权益（核心是 roomMax，供 HostScreen 做人数上限提示）。
- * 公开房开关仍走 checkPublicPermission() 的即时校验，不依赖这里。
- */
 internal fun MainViewModel.refreshSponsor() {
     viewModelScope.launch {
         repo.getSponsor()
@@ -138,9 +139,7 @@ internal fun MainViewModel.fetchPublicRooms() {
     viewModelScope.launch {
         repo.getPublicRooms()
             .onSuccess { _uiState.value = _uiState.value.copy(publicRooms = it.rooms) }
-            .onFailure { e ->
-                handleAuthError(e) // 静默拦截
-            }
+            .onFailure { e -> handleAuthError(e) }
     }
 }
 
@@ -188,7 +187,6 @@ internal fun MainViewModel.startPatrol() {
             fetchFileTasks()
             if (tick % 100 == 0) {
                 repo.getRoomTime().onSuccess { rt ->
-                    // 驱动 isTimeExhausted，只在「首次变 true」时弹一次
                     val wasExhausted = _uiState.value.isTimeExhausted
                     _uiState.value = _uiState.value.copy(
                         walletSeconds = rt.walletSeconds,
@@ -267,13 +265,9 @@ internal fun MainViewModel.checkPublicPermission(onResult: (Boolean) -> Unit) {
     viewModelScope.launch {
         repo.getSponsor()
             .onSuccess { onResult(it.canPublicRoom) }
-            .onFailure { e ->
-                if (!handleAuthError(e)) onResult(false)
-            }
+            .onFailure { e -> if (!handleAuthError(e)) onResult(false) }
     }
 }
-
-// ===== 开发者模式与设置模块 =====
 
 internal fun MainViewModel.enableDeveloperMode() {
     _uiState.value = _uiState.value.copy(isDevMode = true)
@@ -310,11 +304,7 @@ internal fun MainViewModel.rotateToken() {
     viewModelScope.launch {
         repo.rotateToken()
             .onSuccess { _uiEvent.tryEmit(UiEvent.ShowSnackbar("Token 已轮换，请保存好新值")) }
-            .onFailure { e ->
-                if (!handleAuthError(e)) {
-                    _uiEvent.tryEmit(UiEvent.ShowSnackbar("Token 轮换失败: ${e.message}", isLong = true))
-                }
-            }
+            .onFailure { e -> if (!handleAuthError(e)) _uiEvent.tryEmit(UiEvent.ShowSnackbar("Token 轮换失败: ${e.message}", isLong = true)) }
     }
 }
 

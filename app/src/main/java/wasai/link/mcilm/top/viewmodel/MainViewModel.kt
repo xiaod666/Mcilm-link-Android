@@ -80,10 +80,10 @@ data class UiState(
     val chatMicOn: Boolean = true,
     val chatSpeakerOn: Boolean = true,
     val chatVolume: Int = 5,
-    // ========== [新增] 开房链路 ==========
+    // ========== 开房链路 ==========
     val roomMax: Int = 5,
     val isTimeExhausted: Boolean = false,
-    // ========== [新增] 平台能力 ==========
+    // ========== 平台能力 ==========
     val announcements: List<Announcement> = emptyList(),
     val unreadAnnouncementCount: Int = 0,
     val activities: List<ActivityInfo> = emptyList(),
@@ -122,6 +122,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     internal val connectivityManager = app.getSystemService(Application.CONNECTIVITY_SERVICE) as ConnectivityManager
     internal var wasOffline = false
     internal var networkCallback: ConnectivityManager.NetworkCallback? = null
+
+    // 【修复】声明断网缓冲 Job
+    internal var networkLostJob: Job? = null
+
     internal val pendingSelfMessages = ConcurrentHashMap<String, Long>()
 
     internal var reconnectDeferred: CompletableDeferred<Boolean>? = null
@@ -144,7 +148,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             silentCheckInAndRefreshBalance()
             refreshSponsor()
             fetchNodeNames()
-            // [新增] 启动拉公告 + 活动
             fetchAnnouncements(silent = true)
             fetchActivities()
         }
@@ -183,6 +186,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     override fun onCleared() {
         stopPatrol()
+
+        // 【修复】清理断网缓冲
+        networkLostJob?.cancel()
+
         networkCallback?.let {
             try { connectivityManager.unregisterNetworkCallback(it) } catch (_: Exception) {}
         }
