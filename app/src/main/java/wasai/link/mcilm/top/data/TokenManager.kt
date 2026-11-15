@@ -11,7 +11,6 @@ import org.json.JSONObject
 
 class TokenManager(context: Context) {
 
-    // 使用 applicationContext 防止 Activity 泄漏
     private val appContext = context.applicationContext
 
     private val sharedPreferences: SharedPreferences by lazy {
@@ -48,54 +47,32 @@ class TokenManager(context: Context) {
         }
     }
 
-    // ==================== Token 基础管理 ====================
-
     fun saveToken(token: String) {
-        try {
-            sharedPreferences.edit { putString("mci_token", token.trim()) }
-        } catch (t: Throwable) {
-            Log.e("TokenManager", "saveToken failed", t)
-        }
+        try { sharedPreferences.edit { putString("mci_token", token.trim()) } } catch (t: Throwable) { Log.e("TokenManager", "saveToken failed", t) }
     }
 
     fun getToken(): String? {
-        return try {
-            sharedPreferences.getString("mci_token", null)?.takeIf { it.isNotBlank() }
-        } catch (t: Throwable) {
-            Log.e("TokenManager", "getToken failed", t)
-            null
-        }
+        return try { sharedPreferences.getString("mci_token", null)?.takeIf { it.isNotBlank() } } catch (t: Throwable) { null }
     }
 
     fun saveCurrentAccount(account: String) {
         try { sharedPreferences.edit { putString("current_account", account) } } catch (_: Throwable) {}
     }
 
-    fun getCurrentAccount(): String? = try {
-        sharedPreferences.getString("current_account", null)
-    } catch (t: Throwable) { null }
+    fun getCurrentAccount(): String? = try { sharedPreferences.getString("current_account", null) } catch (t: Throwable) { null }
 
     fun clearToken() {
         try {
-            // 使用 commit 确保登出立即写入磁盘
             sharedPreferences.edit(commit = true) {
                 remove("mci_token")
                 remove("current_account")
             }
-        } catch (t: Throwable) {
-            Log.e("TokenManager", "clearToken failed", t)
-        }
+        } catch (t: Throwable) { Log.e("TokenManager", "clearToken failed", t) }
     }
 
     fun overrideToken(token: String) {
-        try {
-            sharedPreferences.edit { putString("mci_token", token.trim()) }
-        } catch (t: Throwable) {
-            Log.e("TokenManager", "overrideToken failed", t)
-        }
+        try { sharedPreferences.edit { putString("mci_token", token.trim()) } } catch (t: Throwable) { Log.e("TokenManager", "overrideToken failed", t) }
     }
-
-    // ==================== 记住账号密码列表 ====================
 
     data class RememberedAccount(
         val account: String,
@@ -104,7 +81,6 @@ class TokenManager(context: Context) {
         val lastManualLoginAt: Long,
         val lastAutoLoginAt: Long
     ) {
-        // 重写 toString 防止密码泄漏到日志
         override fun toString(): String {
             return "RememberedAccount(account='$account', password='***', expireAt=$expireAt, lastManualLoginAt=$lastManualLoginAt, lastAutoLoginAt=$lastAutoLoginAt)"
         }
@@ -121,7 +97,6 @@ class TokenManager(context: Context) {
             var needCleanup = false
 
             for (i in 0 until jsonArray.length()) {
-                // 单条解析容错
                 try {
                     val obj = jsonArray.getJSONObject(i)
                     val expireAt = obj.optLong("expireAt", 0L)
@@ -133,13 +108,12 @@ class TokenManager(context: Context) {
                         val lastAuto = obj.optLong("lastAutoLoginAt", lastManual)
 
                         if (acc.isNotBlank()) {
-                            // 注意：如果密码被安全机制清空（pwd为空白），这里依然要加入列表，但后续 UI 会提示需要验证密码
                             result.add(RememberedAccount(acc, pwd, expireAt, lastManual, lastAuto))
                         } else {
                             needCleanup = true
                         }
                     } else {
-                        needCleanup = true // 标记已过期
+                        needCleanup = true
                     }
                 } catch (e: Exception) {
                     Log.w("TokenManager", "解析单条记住账号失败，跳过", e)
@@ -153,7 +127,7 @@ class TokenManager(context: Context) {
                     for (acc in result) {
                         newArray.put(accountToJson(acc))
                     }
-                    sharedPreferences.edit { putString("remembered_accounts_list", newArray.toString()) }
+                    sharedPreferences.edit(commit = true) { putString("remembered_accounts_list", newArray.toString()) }
                 } catch (t: Throwable) {
                     Log.e("TokenManager", "cleanup remembered accounts failed", t)
                 }
@@ -171,11 +145,7 @@ class TokenManager(context: Context) {
 
     @Synchronized
     fun saveRememberedAccount(account: String, password: String) {
-        val accounts = readRememberedAccountsOrNull() ?: run {
-            Log.e("TokenManager", "由于读取旧账号列表失败，中止保存以防止数据丢失")
-            return
-        }
-
+        val accounts = readRememberedAccountsOrNull() ?: return
         try {
             val mutableAccounts = accounts.toMutableList()
             mutableAccounts.removeAll { it.account == account }
@@ -185,7 +155,6 @@ class TokenManager(context: Context) {
             mutableAccounts.add(0, RememberedAccount(account, password, expireAt, now, now))
 
             val limitedAccounts = mutableAccounts.take(5)
-
             val jsonArray = JSONArray()
             for (acc in limitedAccounts) {
                 jsonArray.put(accountToJson(acc))
@@ -226,13 +195,12 @@ class TokenManager(context: Context) {
             for (acc in filtered) {
                 jsonArray.put(accountToJson(acc))
             }
-            sharedPreferences.edit { putString("remembered_accounts_list", jsonArray.toString()) }
+            sharedPreferences.edit(commit = true) { putString("remembered_accounts_list", jsonArray.toString()) }
         } catch (t: Throwable) {
             Log.e("TokenManager", "removeRememberedAccount failed", t)
         }
     }
 
-    // 【新增】令牌失效时，强制作废该账号的免密密码
     @Synchronized
     fun invalidateAccountPassword(account: String) {
         val accounts = readRememberedAccountsOrNull() ?: return
@@ -241,26 +209,32 @@ class TokenManager(context: Context) {
             val index = mutableAccounts.indexOfFirst { it.account == account }
             if (index != -1) {
                 val old = mutableAccounts[index]
-                // 将密码置空，并将过期时间设为 0（强制失效）
-                mutableAccounts[index] = old.copy(password = "", expireAt = 0L)
+                mutableAccounts[index] = old.copy(password = "")
 
                 val jsonArray = JSONArray()
                 for (acc in mutableAccounts) {
                     jsonArray.put(accountToJson(acc))
                 }
-                sharedPreferences.edit { putString("remembered_accounts_list", jsonArray.toString()) }
+                sharedPreferences.edit(commit = true) { putString("remembered_accounts_list", jsonArray.toString()) }
             }
         } catch (t: Throwable) {
             Log.e("TokenManager", "invalidateAccountPassword failed", t)
         }
     }
 
+    // 【新增】如果无法确定当前账号，直接作废所有本地免密
     @Synchronized
-    fun clearAllRememberedAccounts() {
+    fun invalidateAllPasswords() {
+        val accounts = readRememberedAccountsOrNull() ?: return
         try {
-            sharedPreferences.edit(commit = true) { remove("remembered_accounts_list") }
+            val mutableAccounts = accounts.map { it.copy(password = "") }
+            val jsonArray = JSONArray()
+            for (acc in mutableAccounts) {
+                jsonArray.put(accountToJson(acc))
+            }
+            sharedPreferences.edit(commit = true) { putString("remembered_accounts_list", jsonArray.toString()) }
         } catch (t: Throwable) {
-            Log.e("TokenManager", "clearAllRememberedAccounts failed", t)
+            Log.e("TokenManager", "invalidateAllPasswords failed", t)
         }
     }
 

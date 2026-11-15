@@ -27,7 +27,6 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -57,7 +56,12 @@ fun LoginScreen(vm: MainViewModel, onLoginSuccess: () -> Unit) {
     var showTraditionalLogin by rememberSaveable { mutableStateOf(false) }
     var prefilledAccount by rememberSaveable { mutableStateOf("") }
 
-    var rememberedAccounts by remember { mutableStateOf(vm.tokenManager.getRememberedAccounts()) }
+    var localRefreshTrigger by remember { mutableIntStateOf(0) }
+
+    // 【核心修复】去掉了 state.isLoading 依赖，防止网络请求引起整个登录页频繁重组导致崩溃
+    val rememberedAccounts = remember(state.accountUpdateCounter, localRefreshTrigger) {
+        vm.tokenManager.getRememberedAccounts()
+    }
 
     LaunchedEffect(state.authState) {
         if (state.authState == AuthState.Authenticated) {
@@ -81,7 +85,7 @@ fun LoginScreen(vm: MainViewModel, onLoginSuccess: () -> Unit) {
                 },
                 onDeleteAccount = { acc ->
                     vm.removeRememberedAccount(acc)
-                    rememberedAccounts = vm.tokenManager.getRememberedAccounts()
+                    localRefreshTrigger++
                     Toast.makeText(context, "已移除账号记录", Toast.LENGTH_SHORT).show()
                 },
                 onForcePassword = { acc ->
@@ -143,8 +147,7 @@ private fun AccountSelectionView(
                 val gracePeriod = 3L * 24 * 60 * 60 * 1000L
                 val checkInterval = 24L * 60 * 60 * 1000L
 
-                // 如果密码为空、过期时间<=0、或超过免密期限，强制输入密码
-                val isForcePassword = cred.password.isBlank() || cred.expireAt <= 0 ||
+                val isForcePassword = cred.password.isBlank() ||
                         ((now > cred.lastManualLoginAt + gracePeriod) && (now - cred.lastAutoLoginAt >= checkInterval))
 
                 val isLoadingThis = loggingInAccount == cred.account
@@ -243,15 +246,9 @@ private fun TraditionalLoginView(
     var rememberMe by rememberSaveable { mutableStateOf(true) }
     var lastToastTime by remember { mutableStateOf(0L) }
 
-    val passwordFocusRequester = FocusRequester()
     val focusManager = LocalFocusManager.current
 
-    LaunchedEffect(Unit) {
-        if (initialAccount.isNotBlank()) {
-            kotlinx.coroutines.delay(300)
-            passwordFocusRequester.requestFocus()
-        }
-    }
+    // 【核心修复】注释掉了强制自动聚焦弹键盘的代码，避免了模拟器/部分机型在输入法弹出时闪退
 
     val checkLimit: (String, Int, String) -> String = { text, max, name ->
         if (text.length > max) {
@@ -309,8 +306,6 @@ private fun TraditionalLoginView(
                 focusedContainerColor = Color.Transparent,
                 unfocusedContainerColor = Color.Transparent
             ),
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-            keyboardActions = KeyboardActions(onNext = { passwordFocusRequester.requestFocus() }),
             trailingIcon = { ClearIcon(account) { account = "" } },
             modifier = Modifier.fillMaxWidth()
         )
@@ -333,7 +328,7 @@ private fun TraditionalLoginView(
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = { submitLogin() }),
             trailingIcon = { ClearIcon(password) { password = "" } },
-            modifier = Modifier.fillMaxWidth().focusRequester(passwordFocusRequester)
+            modifier = Modifier.fillMaxWidth()
         )
 
         if (state.errorMsg != null) {

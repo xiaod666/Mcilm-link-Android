@@ -17,7 +17,6 @@ import kotlinx.coroutines.launch
 import org.json.JSONObject
 import wasai.link.mcilm.top.link.MciLmNative
 import wasai.link.mcilm.top.network.RateLimitException
-import wasai.link.mcilm.top.network.TokenExpiredException
 import java.io.File
 import kotlin.time.Duration.Companion.seconds
 
@@ -52,27 +51,6 @@ internal fun MainViewModel.registerNetworkCallback() {
 
 // ==================== 登录与账号 ====================
 
-internal fun MainViewModel.handleAuthError(e: Throwable): Boolean {
-    if (e is TokenExpiredException) {
-        // 【安全加固】当发生 401 时，作废当前账号的本地免密记录
-        val currentAccount = tokenManager.getCurrentAccount()
-        if (currentAccount != null) {
-            tokenManager.invalidateAccountPassword(currentAccount)
-            MciLmNative.logApp("安全警告：Token 已失效（可能被重置），已强制清除账号 [$currentAccount] 的本地免密凭据")
-        }
-
-        _uiState.value = _uiState.value.copy(
-            authState = AuthState.Unauthenticated,
-            walletSeconds = 0L,
-            errorMsg = null,
-            isLoading = false
-        )
-        _uiEvent.tryEmit(UiEvent.ShowSnackbar("登录凭证已失效（可能账号被重置），为保障安全请重新输入密码", isLong = true))
-        return true
-    }
-    return false
-}
-
 internal fun MainViewModel.login(account: String, password: String, rememberMe: Boolean, isSilent: Boolean = false) {
     if (account.isBlank() || password.isBlank()) {
         _uiState.value = _uiState.value.copy(errorMsg = "账号密码不能为空")
@@ -84,7 +62,7 @@ internal fun MainViewModel.login(account: String, password: String, rememberMe: 
         try {
             val result = repo.loginAndGetPermanentToken(account, password)
             result.onSuccess {
-                // 【新增】记录当前登录账号
+                // 记录当前登录账号
                 tokenManager.saveCurrentAccount(account)
 
                 if (isSilent) {
@@ -104,8 +82,18 @@ internal fun MainViewModel.login(account: String, password: String, rememberMe: 
                 fetchNodeNames()
             }.onFailure { e ->
                 _uiState.value = _uiState.value.copy(authState = AuthState.Unauthenticated, isLoading = false)
-                if (e is RateLimitException) _uiEvent.tryEmit(UiEvent.ShowSnackbar("您操作得太快啦", isLong = true))
-                else _uiState.value = _uiState.value.copy(errorMsg = e.message ?: "登录失败")
+                if (e is RateLimitException) {
+                    _uiEvent.tryEmit(UiEvent.ShowSnackbar("您操作得太快啦", isLong = true))
+                } else {
+                    if (isSilent) {
+                        // 【核心修复】静默登录失败，强制作废该账号的密码并通知 UI 刷新
+                        tokenManager.invalidateAccountPassword(account)
+                        _uiState.value = _uiState.value.copy(accountUpdateCounter = _uiState.value.accountUpdateCounter + 1)
+                        _uiEvent.tryEmit(UiEvent.ShowSnackbar("免密登录已失效，请重新输入密码", isLong = true))
+                    } else {
+                        _uiState.value = _uiState.value.copy(errorMsg = e.message ?: "登录失败")
+                    }
+                }
             }
         } catch (t: Throwable) {
             _uiState.value = _uiState.value.copy(isLoading = false, errorMsg = "系统错误: ${t.message}")
@@ -381,6 +369,11 @@ internal fun MainViewModel.overrideToken(newToken: String) {
         return
     }
     tokenManager.overrideToken(newToken.trim())
+
+    // 【核心修复】清空当前绑定的账号标记，防止后续用空字符串去清理密码导致漏网之鱼
+    // 采用保存 "" 的方式，配合 getCurrentAccount() 返回的可能是 ""，在业务层使用 isNullOrBlank 进行拦截
+    tokenManager.saveCurrentAccount("")
+
     _uiEvent.tryEmit(UiEvent.ShowSnackbar("Token 已覆盖，请重启 App 生效"))
-    MciLmNative.logApp("开发者强制覆盖了 Token")
+    MciLmNative.logApp("开发者强制覆盖了 Token，并清理了本地当前账号标记")
 }

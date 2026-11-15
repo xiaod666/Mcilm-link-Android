@@ -4,6 +4,7 @@ import android.app.Application
 import android.net.ConnectivityManager
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -12,6 +13,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import wasai.link.mcilm.top.data.TokenManager
 import wasai.link.mcilm.top.link.MciLmNative
 import wasai.link.mcilm.top.network.ActivityInfo
@@ -80,16 +82,15 @@ data class UiState(
     val chatMicOn: Boolean = true,
     val chatSpeakerOn: Boolean = true,
     val chatVolume: Int = 5,
-    // ========== 开房链路 ==========
     val roomMax: Int = 5,
     val isTimeExhausted: Boolean = false,
-    // ========== 平台能力 ==========
+    val nodePing: Int = -1,
     val announcements: List<Announcement> = emptyList(),
     val unreadAnnouncementCount: Int = 0,
     val activities: List<ActivityInfo> = emptyList(),
     val inviteInfo: InviteResponse? = null,
     val feedbackList: List<FeedbackItem> = emptyList(),
-    val nodePing: Int = -1,
+    val accountUpdateCounter: Int = 0
 )
 
 data class HostParams(
@@ -123,10 +124,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     internal val connectivityManager = app.getSystemService(Application.CONNECTIVITY_SERVICE) as ConnectivityManager
     internal var wasOffline = false
     internal var networkCallback: ConnectivityManager.NetworkCallback? = null
-
-    // 【修复】声明断网缓冲 Job
     internal var networkLostJob: Job? = null
-
     internal val pendingSelfMessages = ConcurrentHashMap<String, Long>()
 
     internal var reconnectDeferred: CompletableDeferred<Boolean>? = null
@@ -144,13 +142,39 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         )
 
         if (repo.getLocalToken() != null) {
-            _uiState.value = _uiState.value.copy(authState = AuthState.Authenticated)
-            MciLmNative.logApp("自动登录成功")
-            silentCheckInAndRefreshBalance()
-            refreshSponsor()
-            fetchNodeNames()
-            fetchAnnouncements(silent = true)
-            fetchActivities()
+            viewModelScope.launch {
+                _uiState.value = _uiState.value.copy(isLoading = true, loadingMsg = "正在校验登录状态...")
+
+                val isTokenValid = repo.checkAccountStatus()
+
+                if (isTokenValid) {
+                    _uiState.value = _uiState.value.copy(authState = AuthState.Authenticated, isLoading = false)
+                    MciLmNative.logApp("自动登录成功")
+                    silentCheckInAndRefreshBalance()
+                    refreshSponsor()
+                    fetchNodeNames()
+                    fetchAnnouncements(silent = true)
+                    fetchActivities()
+                } else {
+                    val currentAccount = tokenManager.getCurrentAccount()
+                    // 【核心修复】必须同时判断 null 和 blank
+                    if (!currentAccount.isNullOrBlank()) {
+                        tokenManager.invalidateAccountPassword(currentAccount)
+                        MciLmNative.logApp("自动登录被拦截：本地 Token 已失效，已强制作废账号 [$currentAccount] 的免密密码")
+                    } else {
+                        tokenManager.invalidateAllPasswords()
+                        MciLmNative.logApp("自动登录被拦截：无法定位当前账号，已作废所有免密缓存")
+                    }
+
+                    repo.logout()
+                    _uiState.value = _uiState.value.copy(
+                        authState = AuthState.Unauthenticated,
+                        isLoading = false,
+                        accountUpdateCounter = _uiState.value.accountUpdateCounter + 1
+                    )
+                    _uiEvent.tryEmit(UiEvent.ShowSnackbar("登录状态已失效，为保障安全请重新输入密码", isLong = true))
+                }
+            }
         }
         registerNetworkCallback()
     }
@@ -171,13 +195,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     internal fun handleAuthError(e: Throwable): Boolean {
         if (e is TokenExpiredException) {
+            val currentAccount = tokenManager.getCurrentAccount()
+            // 【核心修复】必须同时判断 null 和 blank
+            if (!currentAccount.isNullOrBlank()) {
+                tokenManager.invalidateAccountPassword(currentAccount)
+                MciLmNative.logApp("安全警告：Token 已失效（可能被重置），已强制清除账号 [$currentAccount] 的本地免密凭据")
+            } else {
+                tokenManager.invalidateAllPasswords()
+                MciLmNative.logApp("安全警告：无法定位当前账号，已强制清除所有本地免密凭据")
+            }
+
             _uiState.value = _uiState.value.copy(
                 authState = AuthState.Unauthenticated,
                 walletSeconds = 0L,
                 errorMsg = null,
-                isLoading = false
+                isLoading = false,
+                accountUpdateCounter = _uiState.value.accountUpdateCounter + 1
             )
-            _uiEvent.tryEmit(UiEvent.ShowSnackbar("登录已过期，请重新登录", isLong = true))
+            _uiEvent.tryEmit(UiEvent.ShowSnackbar("登录凭证已失效（可能账号被重置），为保障安全请重新输入密码", isLong = true))
             return true
         }
         return false
@@ -187,10 +222,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     override fun onCleared() {
         stopPatrol()
-
-        // 【修复】清理断网缓冲
         networkLostJob?.cancel()
-
         networkCallback?.let {
             try { connectivityManager.unregisterNetworkCallback(it) } catch (_: Exception) {}
         }

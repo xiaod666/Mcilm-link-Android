@@ -17,13 +17,10 @@ import java.util.concurrent.TimeUnit
 
 class RateLimitException(val userMsg: String) : Exception(userMsg)
 class TokenExpiredException(msg: String) : Exception(msg)
-
-/** 400 业务码异常：用于 claimed / bound / already 等幂等语义的分支 */
 class BusinessException(val code: String, val userMsg: String) : Exception(userMsg)
 
 class AuthRepository(tokenManager: TokenManager) {
     private val tokenManager: TokenManager = tokenManager
-
     private val json = Json { ignoreUnknownKeys = true }
 
     private val okHttpClient = OkHttpClient.Builder()
@@ -46,11 +43,22 @@ class AuthRepository(tokenManager: TokenManager) {
     fun getLocalToken(): String? = tokenManager.getToken()
     fun logout() = tokenManager.clearToken()
 
+    // 【彻底修复】只有真正的网络错误才宽容处理，401 必须认定为失效！
     suspend fun checkAccountStatus(): Boolean {
         val token = getLocalToken() ?: return true
-        return try { api.getMe("Bearer $token"); true }
-        catch (e: HttpException) { e.code() != 403 }
-        catch (_: Exception) { true }
+        return try {
+            api.getMe("Bearer $token")
+            true
+        } catch (e: HttpException) {
+            // 401 Unauthorized 或 403 Forbidden 一律视为失效
+            MciLmNative.logApp("Token 校验失败: HTTP ${e.code()}")
+            false
+        } catch (e: UnknownHostException) {
+            MciLmNative.logApp("断网启动，宽容放行")
+            true // 断网时无法校验，宽容放行，等联网后业务层会再拦截
+        } catch (e: Exception) {
+            false // 其他异常默认拦截
+        }
     }
 
     suspend fun loginAndGetPermanentToken(account: String, password: String): Result<String> {
@@ -120,8 +128,6 @@ class AuthRepository(tokenManager: TokenManager) {
         } catch (e: Exception) { Result.failure(handleException(e)) }
     }
 
-    // ==================== 公告 ====================
-
     suspend fun getAnnouncements(): Result<AnnouncementsResponse> {
         val token = getLocalToken() ?: return Result.failure(Exception("未登录"))
         return try { Result.success(api.getAnnouncements("Bearer $token")) }
@@ -136,8 +142,6 @@ class AuthRepository(tokenManager: TokenManager) {
             else Result.failure(Exception("标记已读失败: HTTP ${resp.code()}"))
         } catch (e: Exception) { Result.failure(handleException(e)) }
     }
-
-    // ==================== 活动 ====================
 
     suspend fun getActivities(): Result<ActivitiesResponse> {
         val token = getLocalToken() ?: return Result.failure(Exception("未登录"))
@@ -157,8 +161,6 @@ class AuthRepository(tokenManager: TokenManager) {
             } else Result.failure(handleException(e))
         } catch (e: Exception) { Result.failure(handleException(e)) }
     }
-
-    // ==================== 邀请 ====================
 
     suspend fun getInvite(): Result<InviteResponse> {
         val token = getLocalToken() ?: return Result.failure(Exception("未登录"))
@@ -181,8 +183,6 @@ class AuthRepository(tokenManager: TokenManager) {
         } catch (e: Exception) { Result.failure(handleException(e)) }
     }
 
-    // ==================== 反馈 ====================
-
     suspend fun submitFeedback(category: String, content: String, contact: String?): Result<FeedbackSubmitResponse> {
         val token = getLocalToken() ?: return Result.failure(Exception("未登录"))
         return try {
@@ -195,8 +195,6 @@ class AuthRepository(tokenManager: TokenManager) {
         return try { Result.success(api.getFeedbackList("Bearer $token")) }
         catch (e: Exception) { Result.failure(handleException(e)) }
     }
-
-    // ==================== 内部工具 ====================
 
     private fun parseErrorBody(e: HttpException): ErrorResponse? {
         return try {
