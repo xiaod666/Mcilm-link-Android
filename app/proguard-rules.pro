@@ -1,16 +1,18 @@
 # ==========================================
-# 1. JNI 桥接与 Native 方法保护
+# 1. 基础与 JNI 保护
 # ==========================================
-# 保持 JNI 桥接类（注意包名必须带 .link）
 -keep class wasai.link.mcilm.top.link.MciLmNative { *; }
 -keepclasseswithmembernames class * {
     native <methods>;
 }
+-keep class kotlin.Metadata { *; }
+-keepclassmembers class kotlinx.coroutines.** {
+    volatile <fields>;
+}
 
 # ==========================================
-# 2. 数据模型与 Kotlin Serialization 保护
+# 2. 数据模型与 Kotlin Serialization
 # ==========================================
-# 保留所有 @Serializable 注解的类和生成的序列化器
 -keepattributes *Annotation*, InnerClasses
 -dontnote kotlinx.serialization.AnnotationsKt
 -keepclassmembers class kotlinx.serialization.json.** {
@@ -26,40 +28,53 @@
 -keepclasseswithmembers class wasai.link.mcilm.top.** {
     kotlinx.serialization.KSerializer serializer(...);
 }
-# 防止 data class 的 component 方法和 copy 方法被混淆
 -keep class wasai.link.mcilm.top.network.** { *; }
 
 # ==========================================
-# 3. 网络库 (Retrofit / OkHttp) 保护
+# 3. 网络与扫码库保护
 # ==========================================
--dontwarn okhttp3.**
--dontwarn okio.**
--dontwarn retrofit2.**
--dontwarn javax.annotation.**
 -keepattributes Signature
 -keepattributes Exceptions
 -keepclasseswithmembers class * {
     @retrofit2.http.* <methods>;
 }
-
-# ==========================================
-# 4. 扫码库 (ZXing) 保护
-# ==========================================
 -keep class com.journeyapps.barcodescanner.** { *; }
 -keep class com.google.zxing.** { *; }
 
 # ==========================================
-# 5. 基础 Kotlin 与 协程保护
+# 4. 超级全家桶防报错 (Missing Classes)
 # ==========================================
--keep class kotlin.Metadata { *; }
--keepclassmembers class kotlinx.coroutines.** {
-    volatile <fields>;
-}
--dontwarn kotlinx.coroutines.**
+-dontwarn okhttp3.**
+-dontwarn okio.**
+-dontwarn retrofit2.**
+-dontwarn javax.annotation.**
+-dontwarn kotlinx.**
+-dontwarn kotlin.**
+-dontwarn org.conscrypt.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.openjsse.**
+-dontwarn org.slf4j.**
+-dontwarn org.apache.**
+-dontwarn java.lang.management.**
+-dontwarn java.rmi.**
+-dontwarn java.rmi.registry.**
+-dontwarn sun.misc.**
+-dontwarn jdk.internal.**
+-dontwarn javax.naming.**
+-dontwarn javax.security.**
+-dontwarn javax.net.**
+-dontwarn com.sun.**
+
+# ==========================================
+# 5. R8 生成的 ErrorProne 缺失类（刚补充的）
+# ==========================================
+-dontwarn com.google.errorprone.annotations.CanIgnoreReturnValue
+-dontwarn com.google.errorprone.annotations.CheckReturnValue
+-dontwarn com.google.errorprone.annotations.Immutable
+-dontwarn com.google.errorprone.annotations.RestrictedApi
 
 # ==========================================
 # 6. 其他
 # ==========================================
-# 保留行号，方便崩溃时看堆栈
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
