@@ -2,15 +2,15 @@
 
 > **项目简介**：本项目是基于 MciLm-link 联机引擎（C ABI 动态库）构建的 Android 原生宿主客户端。通过 JNI 与底层 C 库进行深度交互，实现了联机房间的创建、加入、状态监控、实时文字聊天、语音联机、Minecraft 局域网广播、文件同步、成员列表轮询、事件驱动 UI，平台生态功能（公告/活动/邀请/反馈），以及“后台全局保活与防崩溃分发机制”。
 
-## 许可协议
+## 📄 许可协议
 
-本项目采用 **[CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh)**（署名-非商业性使用-相同方式共享 4.0 国际）协议进行许可。([内核使用的是mcilm-link](https://link.mcilm.top/))
+本项目采用 **[CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh-hans)**（署名-非商业性使用-相同方式共享 4.0 国际）协议进行许可。([内核使用的是 mcilm-link](https://link.mcilm.top/))
 
 ### 简单说明（以完整协议法律文本为准）：
 - ✅ **允许**：个人学习、非盈利项目集成、二次修改、再分发。
 - ❌ **禁止**：任何形式的商业使用（包括但不限于直接售卖、内置到付费产品中）。
-- 📌 **署名**：基于本项目的修改与分发，必须在明显位置保留原作者信息及原项目链接。
-- 🔓 **开源传染**：基于本项目的二次开发（包括修改、增删功能），**必须**使用本协议进行开源，禁止闭源或转为专有软件。
+- 📌 **署名**：基于本项目的修改与分发，必须在明显位置保留原作者信息及原项目链接，并注明是否做出了修改。
+- 🔄 **相同方式共享**：基于本项目的二次开发（包括修改、增删功能），**必须**使用本协议（CC BY-NC-SA 4.0）进行开源，禁止闭源或转为专有软件。
 
 ## 一、 基本信息
 
@@ -36,48 +36,48 @@
 
 ## 三、 工程目录结构
 
-    wasai.link.mcilm.top
-     ├── data
-     │    ├── TokenManager.kt          - 加密存储 Token（多账号、3+1 免密策略、安全作废保护）
-     │    ├── AudioEngine.kt           - 语音采集播放引擎（AEC + NS，兼容性降级）
-     │    ├── NativeLibraryManager.kt  - 内核动态库 API 下载、ELF校验、防崩溃熔断、旧库备份回滚
-     │    └── LogFileManager.kt        - 本地日志脱敏、防注入截断与 Debug 强制双写
-     ├── service
-     │    └── LinkKeepAliveService.kt  - 前台保活服务（防止后台强杀断联）
-     ├── link
-     │    └── MciLmNative.kt           - 核心 JNI 声明、事件分发、音频回调、日志流
-     ├── network
-     │    ├── ApiModels.kt             - 开放 API 数据实体（含公告、活动、邀请等）
-     │    ├── ApiService.kt            - Retrofit 接口定义
-     │    └── AuthRepository.kt        - 统一网络错误处理 (超时封禁限流)
-     ├── ui
-     │    ├── AppRoot.kt               - 全局路由、启动内核加载页、全局弹窗拦截、保活监听
-     │    ├── LoginScreen.kt           - 登录页 (多账号列表、防输入法闪退、局部 Loading)
-     │    ├── HomeScreen.kt            - 主页 (创建加入、公开房列表、铃铛红点、日志 FAB)
-     │    ├── HostScreen.kt            - 房主开房页 (踢人、语音控制、节点延迟 UI 监控、参数防丢)
-     │    ├── JoinScreen.kt            - 访客加入页 (平铺极简设计，高级设置折叠入开发者)
-     │    ├── SettingsScreen.kt        - 设置页 (底部双按钮：退出登录与切换账号)
-     │    ├── AnnouncementsScreen.kt   - 公告页（响应式邮箱式分栏布局）
-     │    ├── ActivityScreen.kt        - 活动中心页（一键领取时长）
-     │    ├── InviteScreen.kt          - 邀请好友页（二维码、链接分享）
-     │    ├── FeedbackScreen.kt        - 意见反馈页（提交防丢失、安全清空）
-     │    ├── BackgroundSettingsDialog.kt - 电池优化与自启动双重引导弹窗
-     │    ├── HtmlContent.kt           - WebView 渲染富文本（防闪烁、防内存泄漏）
-     │    ├── ChatComponents.kt        - 聊天复用组件 (气泡、底栏、文件进度)
-     │    ├── CommonComponents.kt      - 日志面板（含 Tab 过滤与暂停）、导出分享
-     │    └── theme/Theme.kt           - 暗黑科技主题
-     ├── viewmodel
-     │    ├── MainViewModel.kt         - 状态机核心骨架，持有 UiState 和核心变量
-     │    ├── MainViewModel_Network.kt - 网络登录、401 安全熔断处理、签到与断网缓冲
-     │    ├── MainViewModel_Event.kt   - 底层事件订阅、延迟日志解析、聊天文件分流
-     │    ├── MainViewModel_Room.kt    - 房主访客联机控制、断线重连与异步等待
-     │    ├── MainViewModel_Chat.kt    - 聊天收发、语音启停、成员踢人
-     │    ├── MainViewModel_File.kt    - 文件同步、SAF 导出、大文件拦截、缓存清理
-     │    └── MainViewModel_Platform.kt- 公告、活动、邀请、反馈业务逻辑
-     └── cpp
-          ├── native-lib.cpp           - JNI C++ 封装（严密 OOM 保护、防崩溃）
-          └── CMakeLists.txt           - 构建配置 (仅包含 dl/log/android)
-
+```text
+wasai.link.mcilm.top
+ ├── data
+ │    ├── TokenManager.kt          - 加密存储 Token（多账号、3+1 免密策略、安全作废保护）
+ │    ├── AudioEngine.kt           - 语音采集播放引擎（AEC + NS，兼容性降级）
+ │    ├── NativeLibraryManager.kt  - 内核动态库 API 下载、ELF校验、防崩溃熔断、旧库备份回滚
+ │    └── LogFileManager.kt        - 本地日志脱敏、防注入截断与 Debug 强制双写
+ ├── service
+ │    └── LinkKeepAliveService.kt  - 前台保活服务（防止后台强杀断联）
+ ├── link
+ │    └── MciLmNative.kt           - 核心 JNI 声明、事件分发、音频回调、日志流
+ ├── network
+ │    ├── ApiModels.kt             - 开放 API 数据实体（含公告、活动、邀请等）
+ │    ├── ApiService.kt            - Retrofit 接口定义
+ │    └── AuthRepository.kt        - 统一网络错误处理 (超时封禁限流)
+ ├── ui
+ │    ├── AppRoot.kt               - 全局路由、启动内核加载页、全局弹窗拦截、保活监听
+ │    ├── LoginScreen.kt           - 登录页 (多账号列表、防输入法闪退、局部 Loading)
+ │    ├── HomeScreen.kt            - 主页 (创建加入、公开房列表、铃铛红点、日志 FAB)
+ │    ├── HostScreen.kt            - 房主开房页 (踢人、语音控制、节点延迟 UI 监控、参数防丢)
+ │    ├── JoinScreen.kt            - 访客加入页 (平铺极简设计，高级设置折叠入开发者)
+ │    ├── SettingsScreen.kt        - 设置页 (底部双按钮：退出登录与切换账号)
+ │    ├── AnnouncementsScreen.kt   - 公告页（响应式邮箱式分栏布局）
+ │    ├── ActivityScreen.kt        - 活动中心页（一键领取时长）
+ │    ├── InviteScreen.kt          - 邀请好友页（二维码、链接分享）
+ │    ├── FeedbackScreen.kt        - 意见反馈页（提交防丢失、安全清空）
+ │    ├── BackgroundSettingsDialog.kt - 电池优化与自启动双重引导弹窗
+ │    ├── HtmlContent.kt           - WebView 渲染富文本（防闪烁、防内存泄漏）
+ │    ├── ChatComponents.kt        - 聊天复用组件 (气泡、底栏、文件进度)
+ │    ├── CommonComponents.kt      - 日志面板（含 Tab 过滤与暂停）、导出分享
+ │    └── theme/Theme.kt           - 暗黑科技主题
+ ├── viewmodel
+ │    ├── MainViewModel.kt         - 状态机核心骨架，持有 UiState 和核心变量
+ │    ├── MainViewModel_Network.kt - 网络登录、401 安全熔断处理、签到与断网缓冲
+ │    ├── MainViewModel_Event.kt   - 底层事件订阅、延迟日志解析、聊天文件分流
+ │    ├── MainViewModel_Room.kt    - 房主访客联机控制、断线重连与异步等待
+ │    ├── MainViewModel_Chat.kt    - 聊天收发、语音启停、成员踢人
+ │    ├── MainViewModel_File.kt    - 文件同步、SAF 导出、大文件拦截、缓存清理
+ │    └── MainViewModel_Platform.kt- 公告、活动、邀请、反馈业务逻辑
+ └── cpp
+      ├── native-lib.cpp           - JNI C++ 封装（严密 OOM 保护、防崩溃）
+      └── CMakeLists.txt           - 构建配置 (仅包含 dl/log/android)
 ## 四、 核心机制说明
 
 ### 1. 多账号管理与智能免密安全策略
