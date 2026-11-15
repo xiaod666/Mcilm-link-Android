@@ -17,6 +17,7 @@ import kotlinx.coroutines.launch
 import org.json.JSONObject
 import wasai.link.mcilm.top.link.MciLmNative
 import wasai.link.mcilm.top.network.RateLimitException
+import wasai.link.mcilm.top.network.TokenExpiredException
 import java.io.File
 import kotlin.time.Duration.Companion.seconds
 
@@ -51,6 +52,27 @@ internal fun MainViewModel.registerNetworkCallback() {
 
 // ==================== 登录与账号 ====================
 
+internal fun MainViewModel.handleAuthError(e: Throwable): Boolean {
+    if (e is TokenExpiredException) {
+        // 【安全加固】当发生 401 时，作废当前账号的本地免密记录
+        val currentAccount = tokenManager.getCurrentAccount()
+        if (currentAccount != null) {
+            tokenManager.invalidateAccountPassword(currentAccount)
+            MciLmNative.logApp("安全警告：Token 已失效（可能被重置），已强制清除账号 [$currentAccount] 的本地免密凭据")
+        }
+
+        _uiState.value = _uiState.value.copy(
+            authState = AuthState.Unauthenticated,
+            walletSeconds = 0L,
+            errorMsg = null,
+            isLoading = false
+        )
+        _uiEvent.tryEmit(UiEvent.ShowSnackbar("登录凭证已失效（可能账号被重置），为保障安全请重新输入密码", isLong = true))
+        return true
+    }
+    return false
+}
+
 internal fun MainViewModel.login(account: String, password: String, rememberMe: Boolean, isSilent: Boolean = false) {
     if (account.isBlank() || password.isBlank()) {
         _uiState.value = _uiState.value.copy(errorMsg = "账号密码不能为空")
@@ -62,13 +84,13 @@ internal fun MainViewModel.login(account: String, password: String, rememberMe: 
         try {
             val result = repo.loginAndGetPermanentToken(account, password)
             result.onSuccess {
+                // 【新增】记录当前登录账号
+                tokenManager.saveCurrentAccount(account)
+
                 if (isSilent) {
-                    // 静默登录成功后，只更新免密登录时间，不重置 10 天有效期
                     tokenManager.updateAutoLoginTime(account)
                 } else {
-                    // 手动登录
                     if (rememberMe) {
-                        // 重新记录，重置 3 天免密期和 10 天总有效期
                         tokenManager.saveRememberedAccount(account, password)
                     } else {
                         tokenManager.removeRememberedAccount(account)
@@ -91,18 +113,16 @@ internal fun MainViewModel.login(account: String, password: String, rememberMe: 
     }
 }
 
-// 一键静默登录指定账号
 internal fun MainViewModel.loginWithSpecificAccount(account: String) {
     val accounts = tokenManager.getRememberedAccounts()
     val target = accounts.find { it.account == account }
-    if (target == null) {
-        _uiEvent.tryEmit(UiEvent.ShowSnackbar("该账号密码记录已失效"))
+    if (target == null || target.password.isBlank()) {
+        _uiEvent.tryEmit(UiEvent.ShowSnackbar("该账号密码记录已失效，请重新输入密码"))
         return
     }
     login(target.account, target.password, rememberMe = false, isSilent = true)
 }
 
-// 切换账号（清除当前 Token 回到登录页）
 internal fun MainViewModel.switchAccount() {
     logout()
 }
@@ -126,17 +146,10 @@ internal fun MainViewModel.refreshBalance() {
     }
 }
 
-/**
- * 静默签到 + 刷新余额（登录成功 / 自动登录时调用）。
- * 关键点：签到和拉余额都在【同一个 launch 内】完成，不层叠调用 refreshBalance()。
- * 400 already 已由 AuthRepository 视为成功，不阻断。
- * 遇 401 立即踢回登录页，不再白跑后续请求。
- */
 internal fun MainViewModel.silentCheckInAndRefreshBalance() {
     viewModelScope.launch {
         val checkInResult = repo.checkIn()
         checkInResult.onSuccess { res ->
-            // 【优化】如果确实领到了时长（今天第一次签到），给用户明确的正向反馈
             if (res.claimedSeconds > 0) {
                 val min = res.claimedSeconds / 60
                 val hours = min / 60
@@ -145,13 +158,11 @@ internal fun MainViewModel.silentCheckInAndRefreshBalance() {
 
                 _uiEvent.tryEmit(UiEvent.ShowSnackbar("今日签到成功，已获得 $timeStr 联机时长", isLong = true))
             }
-            // 如果 claimedSeconds == 0，说明今天已经签过了（触发 400 already 兜底），保持静默
         }.onFailure { err ->
             if (handleAuthError(err)) return@launch
             MciLmNative.logApp("登录后静默签到失败(不阻断): ${err.message}")
         }
 
-        // 无论是否签到，都拉取最新余额
         repo.getRoomTime()
             .onSuccess { _uiState.value = _uiState.value.copy(walletSeconds = it.walletSeconds) }
             .onFailure { err ->

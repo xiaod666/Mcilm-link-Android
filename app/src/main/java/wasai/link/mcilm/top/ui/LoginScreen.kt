@@ -114,10 +114,8 @@ private fun AccountSelectionView(
     onForcePassword: (String) -> Unit
 ) {
     val state by vm.uiState.collectAsStateWithLifecycle()
-    // 记录当前正在请求的特定账号
     var loggingInAccount by remember { mutableStateOf<String?>(null) }
 
-    // 当网络请求结束，重置局部 Loading 状态
     LaunchedEffect(state.isLoading) {
         if (!state.isLoading) {
             loggingInAccount = null
@@ -144,9 +142,11 @@ private fun AccountSelectionView(
                 val now = System.currentTimeMillis()
                 val gracePeriod = 3L * 24 * 60 * 60 * 1000L
                 val checkInterval = 24L * 60 * 60 * 1000L
-                val isForcePassword = (now > cred.lastManualLoginAt + gracePeriod) && (now - cred.lastAutoLoginAt >= checkInterval)
 
-                // 判断是不是当前被点击的那个账号
+                // 如果密码为空、过期时间<=0、或超过免密期限，强制输入密码
+                val isForcePassword = cred.password.isBlank() || cred.expireAt <= 0 ||
+                        ((now > cred.lastManualLoginAt + gracePeriod) && (now - cred.lastAutoLoginAt >= checkInterval))
+
                 val isLoadingThis = loggingInAccount == cred.account
 
                 Card(
@@ -174,7 +174,7 @@ private fun AccountSelectionView(
                                 if (isForcePassword) {
                                     onForcePassword(cred.account)
                                 } else {
-                                    loggingInAccount = cred.account // 标记当前账号正在登录
+                                    loggingInAccount = cred.account
                                     vm.loginWithSpecificAccount(cred.account)
                                 }
                             }
@@ -194,7 +194,6 @@ private fun AccountSelectionView(
                             }
                         }
 
-                        // 【修复】只有当前点击的卡片才转圈
                         if (isLoadingThis) {
                             CircularProgressIndicator(modifier = Modifier.size(24.dp), color = NeonGreen, strokeWidth = 2.dp)
                         } else {
@@ -217,7 +216,7 @@ private fun AccountSelectionView(
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = NeonGreen),
                     border = BorderStroke(1.dp, NeonGreen.copy(alpha = 0.3f)),
-                    enabled = loggingInAccount == null && !state.isLoading // 加载时禁止点击其他按钮
+                    enabled = loggingInAccount == null && !state.isLoading
                 ) {
                     Icon(Icons.Default.AddCircleOutline, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
@@ -297,7 +296,6 @@ private fun TraditionalLoginView(
         Text("Mcilm 联机助手", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
         Spacer(Modifier.height(32.dp))
 
-        // 账号输入框
         OutlinedTextField(
             value = account,
             onValueChange = { account = checkLimit(it.replace("\n", "").replace("\r", ""), 50, "账号") },
@@ -318,7 +316,6 @@ private fun TraditionalLoginView(
         )
         Spacer(Modifier.height(16.dp))
 
-        // 密码输入框
         OutlinedTextField(
             value = password,
             onValueChange = { password = checkLimit(it.replace("\n", "").replace("\r", ""), 100, "密码") },
@@ -347,7 +344,6 @@ private fun TraditionalLoginView(
 
         Spacer(Modifier.height(16.dp))
 
-        // 记住密码勾选框
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth().clickable { rememberMe = !rememberMe }
@@ -369,7 +365,6 @@ private fun TraditionalLoginView(
             )
         }
 
-        // 隐私协议勾选框
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Checkbox(
                 checked = agreePrivacy,
@@ -407,7 +402,6 @@ private fun TraditionalLoginView(
 
         Spacer(Modifier.height(32.dp))
 
-        // 登录按钮
         Button(
             onClick = { submitLogin() },
             enabled = !state.isLoading && agreePrivacy,
