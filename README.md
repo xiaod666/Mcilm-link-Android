@@ -6,7 +6,7 @@
 
 - **应用名称**：Mcilm-link 安卓版
 - **包名 Namespace**：`wasai.link.mcilm.top`（发布后不可更改）
-- **版本号**：`1.5.1-beta` (versionCode 10)
+- **版本号**：`1.6.1-beta` (versionCode 11)
 - **ABI 支持**：仅支持 `arm64-v8a`（不提供 32 位 ARM、x86、x86_64 兜底）
 - **最低支持**：Android 7.0 (API 24)
 - **目标版本**：Android 14 (targetSdk 34)
@@ -27,7 +27,7 @@
 
     wasai.link.mcilm.top
      ├── data
-     │    ├── TokenManager.kt          - 加密存储 Token（支持多账号、3天免密计算、强制覆盖）
+     │    ├── TokenManager.kt          - 加密存储 Token（多账号、3+1 免密策略、安全作废保护）
      │    ├── AudioEngine.kt           - 语音采集播放引擎（AEC + NS，兼容性降级）
      │    ├── NativeLibraryManager.kt  - 内核动态库 API 下载、ELF校验、防崩溃熔断、旧库备份回滚
      │    └── LogFileManager.kt        - 本地日志脱敏、防注入截断与 Debug 强制双写
@@ -41,38 +41,39 @@
      │    └── AuthRepository.kt        - 统一网络错误处理 (超时封禁限流)
      ├── ui
      │    ├── AppRoot.kt               - 全局路由、启动内核加载页、全局弹窗拦截、保活监听
-     │    ├── LoginScreen.kt           - 登录页 (多账号列表选择、透明输入框、局部 Loading)
+     │    ├── LoginScreen.kt           - 登录页 (多账号列表、强制安全验证状态联动、透明输入)
      │    ├── HomeScreen.kt            - 主页 (创建加入、公开房列表、铃铛红点、日志 FAB)
-     │    ├── HostScreen.kt            - 房主开房页 (踢人、语音控制、节点延迟 UI 监控)
+     │    ├── HostScreen.kt            - 房主开房页 (踢人、语音控制、节点延迟 UI 监控、参数防丢)
      │    ├── JoinScreen.kt            - 访客加入页 (平铺极简设计，高级设置折叠入开发者)
      │    ├── SettingsScreen.kt        - 设置页 (底部双按钮：退出登录与切换账号)
      │    ├── AnnouncementsScreen.kt   - 公告页（响应式邮箱式分栏布局）
      │    ├── ActivityScreen.kt        - 活动中心页（一键领取时长）
      │    ├── InviteScreen.kt          - 邀请好友页（二维码、链接分享）
-     │    ├── FeedbackScreen.kt        - 意见反馈页（提交与历史查看）
+     │    ├── FeedbackScreen.kt        - 意见反馈页（提交防丢失、安全清空）
      │    ├── BackgroundSettingsDialog.kt - 电池优化与自启动双重引导弹窗
-     │    ├── HtmlContent.kt           - WebView 渲染富文本（公告/活动用）
+     │    ├── HtmlContent.kt           - WebView 渲染富文本（防闪烁、防内存泄漏）
      │    ├── ChatComponents.kt        - 聊天复用组件 (气泡、底栏、文件进度)
      │    ├── CommonComponents.kt      - 日志面板（含 Tab 过滤与暂停）、导出分享
      │    └── theme/Theme.kt           - 暗黑科技主题
      ├── viewmodel
      │    ├── MainViewModel.kt         - 状态机核心骨架，持有 UiState 和核心变量
-     │    ├── MainViewModel_Network.kt - 网络登录、多账号校验、签到与断网缓冲
+     │    ├── MainViewModel_Network.kt - 网络登录、401 安全熔断处理、签到与断网缓冲
      │    ├── MainViewModel_Event.kt   - 底层事件订阅、延迟日志解析、聊天文件分流
      │    ├── MainViewModel_Room.kt    - 房主访客联机控制、断线重连与异步等待
      │    ├── MainViewModel_Chat.kt    - 聊天收发、语音启停、成员踢人
      │    ├── MainViewModel_File.kt    - 文件同步、SAF 导出、大文件拦截、缓存清理
      │    └── MainViewModel_Platform.kt- 公告、活动、邀请、反馈业务逻辑
      └── cpp
-          ├── native-lib.cpp           - JNI C++ 封装，处理底层回调、音频注入与线程挂载
+          ├── native-lib.cpp           - JNI C++ 封装（严密 OOM 保护、防崩溃）
           └── CMakeLists.txt           - 构建配置 (仅包含 dl/log/android)
 
 ## 四、 核心机制说明
 
-### 1. 多账号管理与智能免密策略
-- **多账号快捷登录**：登录页支持本地加密保存最多 5 个账号，独立展示为“账号选择”列表。无需重复输入即可一键登录。
+### 1. 多账号管理与智能免密安全策略
+- **多账号快捷登录**：登录页支持本地加密保存最多 5 个账号，独立展示为“账号选择”列表。
 - **智能免密（3+1 策略）**：勾选记住密码后的前 3 天内可无感快捷登录；超过 3 天后，强制要求隔天（间隔 24 小时）重新输入密码验证。每次手动登录成功将重置 3 天免密期。
-- **硬核安全加密**：账号密码通过 `EncryptedSharedPreferences` 与 `AndroidKeyStore` 硬件级密钥绑定加密存储，仅限 App 运行时解密，最大有效期 10 天。
+- **安全熔断防绕过（新增）**：当服务器端判定当前 Token 失效（如强制下线或重置密码）时，App 会自动**销毁该账号在本地缓存的免密密码**。即便用户再次点击该账号，也会强制要求手动输入密码，彻底堵死盗号者利用本地密码静默续签的漏洞。
+- **硬核安全加密**：账号密码通过 `EncryptedSharedPreferences` 与 `AndroidKeyStore` 硬件级密钥绑定加密存储，最大有效期 10 天。
 
 ### 2. 全局后台保活机制 (Foreground Service)
 - 在用户登录成功后，自动启动 `LinkKeepAliveService`（声明为 `dataSync` 类型）。
@@ -91,18 +92,19 @@
 
 ### 5. 交互防抖与 UI 保护 (UX Protection)
 - **防连点**：ViewModel 层引入 500ms 动作锁。
-- **返回键拦截**：在 Loading 状态拦截物理返回键，防止产生“幽灵房间”。
+- **返回键拦截**：在 Loading 状态或联机中拦截物理返回键，强制弹出安全确认框，防止产生“幽灵房间”。
+- **状态防丢失**：表单状态全面引入 `rememberSaveable` 与 `mapSaver`，旋转屏幕或切换后台不丢失任何填写数据。
 - **开发者折叠**：加入房间的「强制中继」、「优先多跳」等排障参数默认隐藏，需激活开发者模式才可见。
-- **UI 降噪**：主页顶部仅保留“公告、设置”，运行日志改为右下角悬浮按钮。退出登录与切换账号整合至设置页最底部。
 
 ### 6. 现代文件同步体验 (SAF)
 - 接收文件时拉起 `CreateDocument` 选择目录，后台搬运私有目录文件，支持取消与本地打开。
 - 发送文件后 5 分钟自动清理 `cacheDir` 中的临时缓存。
 - **大文件拦截**：大于 100MB 的文件在发送前会被拦截并提示，防止传输超时崩溃。
 
-### 7. 日志系统与音频兼容性
+### 7. 日志系统与底层健壮性
 - **日志面板**：支持暂停滚动、分类 Tab（全部/应用/内核/报错）以及分享，强制同步记录异常堆栈到 `debug.log`。
-- **音频降级**：优先使用 `VOICE_COMMUNICATION` 获取系统 AEC 回声消除；若部分国产 ROM 初始化失败，自动降级回退到 `MIC` 音源，确保语音功能可用。
+- **JNI OOM 防护**：`native-lib.cpp` 全局增加了严谨的 `GetStringUTFChars` 判空保护，拒绝底层空指针闪退。
+- **原子落盘**：内核热更新的熔断计数强制采用同步写入，保证崩溃状态不丢失。
 
 ## 五、 编译与运行指南
 
@@ -122,7 +124,9 @@
 
 ## 六、 待办事项 / 后续计划 (Todo)
 
-**已完成（v1.5.x）：**
+**已完成（v1.6.x）：**
+- [x] Token 失效安全熔断机制（防免密绕过续签）。
+- [x] 深度代码审查 P0/P1 修复（JNI OOM 防护、旋转丢数据、列表重复 Key 崩溃等）。
 - [x] 多账号快捷登录体系与智能免密安全策略（3天免密+隔天验证）。
 - [x] 节点延迟监控 UI 渲染（日志正则解析实时 Ping 值）。
 - [x] 国产 ROM AEC 音频兼容降级。
@@ -139,7 +143,6 @@
 - [x] 后台保活前台服务与自启动双重引导。
 - [x] 计费与时长完整性闭环（静默签到、权益拦截、耗尽横幅）。
 - [x] 扫码组件升级 (`ScanContract`)。
-- [x] 深度 Bug 修复（动态库热更新回滚、防内存/磁盘泄漏、通知栏图标）。
 
 **待办：**
 - [ ] 大文件传输真正的分块与断点续传（等待底层引擎支持）。
