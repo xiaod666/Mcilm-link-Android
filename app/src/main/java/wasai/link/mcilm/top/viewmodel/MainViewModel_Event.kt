@@ -1,8 +1,8 @@
 package wasai.link.mcilm.top.viewmodel
 
-import androidx.lifecycle.viewModelScope // 👈 关键修复
+import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch // 👈 关键修复
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 import wasai.link.mcilm.top.data.AudioEngine
 import wasai.link.mcilm.top.link.MciLmNative
@@ -68,12 +68,27 @@ internal fun MainViewModel.observeEvents() {
                         isHosting = false, isJoining = false, roomId = null, roomPassword = null,
                         isLoading = false, errorMsg = null,
                         members = emptyList(), serverEndpoint = null, localPort = null,
-                        chatHistory = emptyList(), isVoiceActive = false
+                        chatHistory = emptyList(), isVoiceActive = false, nodePing = -1
                     )
                     viewModelScope.launch(Dispatchers.IO) { MciLmNative.linkStop() }
                 }
                 is MciLmNative.Event.Raw -> handleRawEvent(event)
                 else -> Unit
+            }
+        }
+    }
+
+    // 【新增】监听底层日志，正则提取延迟数据并更新 UI
+    viewModelScope.launch(Dispatchers.IO) {
+        MciLmNative.logs.collect { log ->
+            // 匹配类似于 "(45ms," 或 "(45ms)" 的格式
+            val pingRegex = Regex("""\((\d+)ms""")
+            val match = pingRegex.find(log)
+            if (match != null) {
+                val ms = match.groupValues[1].toIntOrNull()
+                if (ms != null && ms != _uiState.value.nodePing) {
+                    _uiState.value = _uiState.value.copy(nodePing = ms)
+                }
             }
         }
     }

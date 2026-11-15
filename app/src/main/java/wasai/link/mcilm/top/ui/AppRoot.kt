@@ -177,7 +177,8 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
                         }
                     }
                 } else {
-                    if (state.isLoading) {
+                    // 【修复】加上 currentRoute != "login" 的判断，防止在登录页弹全局 Loading 弹窗
+                    if (state.isLoading && currentRoute != "login") {
                         AlertDialog(
                             onDismissRequest = { },
                             title = { Text("请稍候") },

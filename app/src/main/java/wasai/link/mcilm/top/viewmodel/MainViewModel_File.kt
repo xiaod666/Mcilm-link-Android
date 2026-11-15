@@ -97,11 +97,19 @@ internal fun MainViewModel.sendFile(uri: Uri) {
         resolver.openInputStream(uri)?.use { input ->
             cacheFile.outputStream().use { output -> input.copyTo(output) }
         }
+
+        // 【新增】大文件拦截提示（限制 100MB）
+        val maxSize = 100 * 1024 * 1024L
+        if (cacheFile.length() > maxSize) {
+            _uiEvent.tryEmit(UiEvent.ShowSnackbar("文件超过 100MB，当前引擎传输不稳定，建议分包或压缩后发送", isLong = true))
+            if (cacheFile.exists()) cacheFile.delete()
+            return@launch
+        }
+
         MciLmNative.logApp("准备发送文件: ${cacheFile.absolutePath}")
         val res = MciLmNative.linkCommand("fs send ${cacheFile.absolutePath}") ?: ""
         MciLmNative.logApp("发送结果: $res")
 
-        // 【P1-4 修复】发送结束后，延迟清理缓存文件
         if (res.contains("没有开启") || res.contains("未启用") || res.contains("方向") || res.contains("不支持")) {
             _uiState.value = _uiState.value.copy(isFileSyncSupported = false)
             _uiEvent.tryEmit(UiEvent.ShowSnackbar("房主未开启此方向的文件同步", isLong = true))

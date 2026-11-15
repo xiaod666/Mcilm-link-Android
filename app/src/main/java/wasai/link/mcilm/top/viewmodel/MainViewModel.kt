@@ -89,6 +89,7 @@ data class UiState(
     val activities: List<ActivityInfo> = emptyList(),
     val inviteInfo: InviteResponse? = null,
     val feedbackList: List<FeedbackItem> = emptyList(),
+    val nodePing: Int = -1,
 )
 
 data class HostParams(

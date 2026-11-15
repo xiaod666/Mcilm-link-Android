@@ -126,13 +126,32 @@ internal fun MainViewModel.refreshBalance() {
     }
 }
 
+/**
+ * 静默签到 + 刷新余额（登录成功 / 自动登录时调用）。
+ * 关键点：签到和拉余额都在【同一个 launch 内】完成，不层叠调用 refreshBalance()。
+ * 400 already 已由 AuthRepository 视为成功，不阻断。
+ * 遇 401 立即踢回登录页，不再白跑后续请求。
+ */
 internal fun MainViewModel.silentCheckInAndRefreshBalance() {
     viewModelScope.launch {
         val checkInResult = repo.checkIn()
-        checkInResult.onFailure { err ->
+        checkInResult.onSuccess { res ->
+            // 【优化】如果确实领到了时长（今天第一次签到），给用户明确的正向反馈
+            if (res.claimedSeconds > 0) {
+                val min = res.claimedSeconds / 60
+                val hours = min / 60
+                val remainMin = min % 60
+                val timeStr = if (hours > 0) "${hours}小时${remainMin}分钟" else "${min}分钟"
+
+                _uiEvent.tryEmit(UiEvent.ShowSnackbar("今日签到成功，已获得 $timeStr 联机时长", isLong = true))
+            }
+            // 如果 claimedSeconds == 0，说明今天已经签过了（触发 400 already 兜底），保持静默
+        }.onFailure { err ->
             if (handleAuthError(err)) return@launch
             MciLmNative.logApp("登录后静默签到失败(不阻断): ${err.message}")
         }
+
+        // 无论是否签到，都拉取最新余额
         repo.getRoomTime()
             .onSuccess { _uiState.value = _uiState.value.copy(walletSeconds = it.walletSeconds) }
             .onFailure { err ->

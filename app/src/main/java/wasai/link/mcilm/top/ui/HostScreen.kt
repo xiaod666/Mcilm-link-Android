@@ -150,7 +150,6 @@ fun HostScreen(vm: MainViewModel, onBack: () -> Unit) {
         } else text
     }
 
-    // 【P2-3 修复】默认值改用手机型号
     var roomMeta by rememberSaveable { mutableStateOf("${android.os.Build.MODEL}的服务器:生存") }
     var maxOnline by rememberSaveable { mutableStateOf("5") }
     var hostPort by rememberSaveable { mutableStateOf("25565") }
@@ -315,7 +314,19 @@ fun HostScreen(vm: MainViewModel, onBack: () -> Unit) {
                         Spacer(Modifier.height(12.dp))
 
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Text("节点: ${state.serverEndpoint ?: "自动分配"}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                            // 【新增】延迟监控 UI 展示
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("节点: ${state.serverEndpoint ?: "自动分配"}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                Spacer(Modifier.width(6.dp))
+                                if (state.nodePing >= 0) {
+                                    val pingColor = when {
+                                        state.nodePing < 60 -> NeonGreen
+                                        state.nodePing < 120 -> Color(0xFFFFD740) // 黄色
+                                        else -> MaterialTheme.colorScheme.error // 红色
+                                    }
+                                    Text("(${state.nodePing}ms)", style = MaterialTheme.typography.bodySmall, color = pingColor, fontWeight = FontWeight.Bold)
+                                }
+                            }
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("成员: ${state.members.size}人", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                                 Spacer(Modifier.width(8.dp))
@@ -605,7 +616,6 @@ fun HostScreen(vm: MainViewModel, onBack: () -> Unit) {
             onDismissRequest = { showMemberDialog = false },
             title = { Text("成员管理") },
             text = {
-                // 【P1-5 修复】加高度限制
                 LazyColumn(modifier = Modifier.heightIn(max = 320.dp)) {
                     items(state.members) { member ->
                         Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {

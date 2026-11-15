@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Login
@@ -21,10 +22,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -64,16 +68,17 @@ fun HomeScreen(
         }
     }
 
+    // 加入公开房确认弹窗
     if (selectedRoomToJoin != null) {
         val room = selectedRoomToJoin!!
         AlertDialog(
             onDismissRequest = { selectedRoomToJoin = null },
             title = { Text("加入房间") },
             text = {
-                Column {
-                    Text("房间名称：${sanitizeText(room.roomName)}")
-                    Text("当前人数：${room.players}/${room.maxPlayers}")
-                    Text("节点：${sanitizeText(room.node ?: "未知")}")
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("房间名称：${sanitizeText(room.roomName)}", fontWeight = FontWeight.Bold)
+                    Text("当前人数：${room.players}/${room.maxPlayers}", color = Color.LightGray)
+                    Text("节点：${sanitizeText(room.node ?: "未知")}", color = Color.LightGray)
                 }
             },
             confirmButton = {
@@ -81,19 +86,18 @@ fun HomeScreen(
                     selectedRoomToJoin = null
                     pendingQuickJoin = true
                     vm.startClient(room.roomId, "", "", ServerMode.DEFAULT, "")
-                }) { Text("确认加入", color = NeonGreen) }
+                }) { Text("确认加入", color = NeonGreen, fontWeight = FontWeight.Bold) }
             },
             dismissButton = {
-                TextButton(onClick = { selectedRoomToJoin = null }) { Text("取消") }
-            }
+                TextButton(onClick = { selectedRoomToJoin = null }) { Text("取消", color = Color.Gray) }
+            },
+            containerColor = DarkSurface
         )
     }
 
-    // 使用 Scaffold 配合悬浮按钮
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         floatingActionButton = {
-            // 将原本在顶部的“运行日志”移到这里，使用小号悬浮按钮
             SmallFloatingActionButton(
                 onClick = { showLogSheet = true },
                 containerColor = DarkSurface,
@@ -108,7 +112,7 @@ fun HomeScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(horizontal = 16.dp) // 只留左右 padding，上下由 Scaffold 处理
+                .padding(horizontal = 16.dp)
         ) {
             Spacer(Modifier.height(16.dp))
 
@@ -120,15 +124,15 @@ fun HomeScreen(
             ) {
                 Text(
                     "Mcilm 联机助手",
-                    style = MaterialTheme.typography.headlineSmall, // 稍微调小字体防挤占
+                    style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
                     color = Color.White
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    // 公告铃铛 + 未读角标
+                    // 公告铃铛
                     Box(modifier = Modifier.padding(end = 4.dp)) {
                         IconButton(onClick = onNavigateAnnouncements) {
-                            Icon(Icons.Default.Notifications, contentDescription = "公告", tint = Color.White)
+                            Icon(Icons.Default.Notifications, contentDescription = "公告", tint = Color.LightGray)
                         }
                         if (state.unreadAnnouncementCount > 0) {
                             Box(
@@ -136,48 +140,75 @@ fun HomeScreen(
                                     .align(Alignment.TopEnd)
                                     .offset(x = (-4).dp, y = 4.dp)
                                     .defaultMinSize(minWidth = 16.dp, minHeight = 16.dp)
-                                    .background(
-                                        color = MaterialTheme.colorScheme.error,
-                                        shape = RoundedCornerShape(percent = 50)
-                                    )
+                                    .background(MaterialTheme.colorScheme.error, RoundedCornerShape(percent = 50))
                                     .padding(horizontal = 4.dp, vertical = 1.dp),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
                                     text = if (state.unreadAnnouncementCount > 99) "99+" else "${state.unreadAnnouncementCount}",
-                                    color = Color.White,
-                                    fontSize = 9.sp,
-                                    lineHeight = 9.sp,
-                                    fontWeight = FontWeight.Bold
+                                    color = Color.White, fontSize = 9.sp, lineHeight = 9.sp, fontWeight = FontWeight.Bold
                                 )
                             }
                         }
                     }
                     // 设置齿轮
                     IconButton(onClick = onNavigateSettings) {
-                        Icon(Icons.Default.Settings, contentDescription = "设置", tint = Color.White)
+                        Icon(Icons.Default.Settings, contentDescription = "设置", tint = Color.LightGray)
                     }
                 }
             }
 
             Spacer(Modifier.height(16.dp))
 
-            // ================= 剩余时长卡片 =================
+            // ================= 剩余时长卡片（渐变质感） =================
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                shape = RoundedCornerShape(16.dp)
+                shape = RoundedCornerShape(20.dp),
+                border = BorderStroke(1.dp, NeonGreen.copy(alpha = 0.3f))
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(20.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            Brush.linearGradient(
+                                colors = listOf(
+                                    DarkSurface,
+                                    NeonGreen.copy(alpha = 0.08f)
+                                )
+                            )
+                        )
                 ) {
-                    Column {
-                        Text("剩余时长", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
-                        Text(formatPlayTime(state.walletSeconds), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = NeonGreen)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(20.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.size(8.dp).background(NeonGreen, CircleShape))
+                                Spacer(Modifier.width(6.dp))
+                                Text("当前时长余额", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+                            }
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                formatPlayTime(state.walletSeconds),
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = NeonGreen
+                            )
+                        }
+                        Button(
+                            onClick = { vm.checkIn() },
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = NeonGreen.copy(alpha = 0.15f),
+                                contentColor = NeonGreen
+                            ),
+                            border = BorderStroke(1.dp, NeonGreen.copy(alpha = 0.5f))
+                        ) {
+                            Text("每日签到", fontWeight = FontWeight.Bold)
+                        }
                     }
-                    Button(onClick = { vm.checkIn() }, shape = RoundedCornerShape(8.dp)) { Text("每日签到") }
                 }
             }
 
@@ -187,19 +218,19 @@ fun HomeScreen(
                 Spacer(Modifier.height(12.dp))
                 Card(
                     modifier = Modifier.fillMaxWidth().clickable { onNavigateActivity() },
-                    colors = CardDefaults.cardColors(containerColor = NeonGreen.copy(alpha = 0.15f)),
-                    border = BorderStroke(1.dp, NeonGreen.copy(alpha = 0.5f)),
-                    shape = RoundedCornerShape(12.dp)
+                    colors = CardDefaults.cardColors(containerColor = NeonGreen.copy(alpha = 0.1f)),
+                    border = BorderStroke(1.dp, NeonGreen.copy(alpha = 0.3f)),
+                    shape = RoundedCornerShape(14.dp)
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(Icons.Default.Star, contentDescription = null, tint = NeonGreen)
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("$unclaimedCount 个活动可领取奖励", color = Color.White, fontWeight = FontWeight.Bold)
-                            Text("点击查看并一键领取时长", color = Color.Gray, fontSize = 12.sp)
+                            Text("$unclaimedCount 个活动奖励待领取", color = NeonGreen, fontWeight = FontWeight.Bold)
+                            Text("点击前往活动中心，一键领取时长", color = Color.LightGray, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
                         }
                         Icon(Icons.Default.KeyboardArrowRight, contentDescription = null, tint = NeonGreen)
                     }
@@ -231,19 +262,29 @@ fun HomeScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("公开房间 (${state.publicRooms.size})", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
-                TextButton(onClick = { vm.fetchPublicRooms() }) { Text("刷新") }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(4.dp, 16.dp).background(NeonGreen, RoundedCornerShape(2.dp)))
+                    Spacer(Modifier.width(8.dp))
+                    Text("公开房间", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
+                }
+                TextButton(onClick = { vm.fetchPublicRooms() }, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                    Text("刷新", fontSize = 13.sp, color = NeonGreen)
+                }
             }
 
             if (state.publicRooms.isEmpty()) {
                 Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                    Text("暂无公开房间", color = Color.Gray)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Default.Public, contentDescription = null, tint = Color.DarkGray, modifier = Modifier.size(48.dp))
+                        Spacer(Modifier.height(12.dp))
+                        Text("暂无公开房间", color = Color.Gray)
+                    }
                 }
             } else {
                 LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier.fillMaxWidth().weight(1f),
-                    contentPadding = PaddingValues(bottom = 80.dp) // 给悬浮按钮留出空间，防止遮挡最后一个房间
+                    contentPadding = PaddingValues(bottom = 80.dp, top = 8.dp)
                 ) {
                     items(items = state.publicRooms, key = { it.roomId }) { room ->
                         PublicRoomCard(room) {
@@ -263,7 +304,6 @@ fun HomeScreen(
         }
     }
 
-    // 日志弹窗
     if (showLogSheet) ModalBottomSheet(onDismissRequest = { showLogSheet = false }) { McilmLogSheetContent() }
 }
 
@@ -282,41 +322,87 @@ fun EntryCard(
     modifier: Modifier = Modifier, title: String, desc: String, icon: ImageVector, onClick: () -> Unit
 ) {
     Card(
-        modifier = modifier.height(120.dp).clickable { onClick() },
+        modifier = modifier.height(120.dp).clip(RoundedCornerShape(16.dp)).clickable { onClick() },
         colors = CardDefaults.cardColors(containerColor = DarkSurface),
-        border = BorderStroke(1.dp, NeonGreen.copy(alpha = 0.3f)),
-        shape = RoundedCornerShape(16.dp)
+        border = BorderStroke(1.dp, Color.DarkGray.copy(alpha = 0.5f))
     ) {
-        Column(
-            modifier = Modifier.fillMaxSize().padding(16.dp),
-            verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(NeonGreen.copy(alpha = 0.05f), Color.Transparent)
+                    )
+                )
         ) {
-            Icon(icon, contentDescription = title, tint = NeonGreen, modifier = Modifier.size(32.dp))
-            Spacer(Modifier.height(8.dp))
-            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
-            Spacer(Modifier.height(4.dp))
-            Text(desc, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            Column(
+                modifier = Modifier.fillMaxSize().padding(16.dp),
+                verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Icon(icon, contentDescription = title, tint = NeonGreen, modifier = Modifier.size(32.dp))
+                Spacer(Modifier.height(8.dp))
+                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
+                Spacer(Modifier.height(4.dp))
+                Text(desc, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            }
         }
     }
 }
 
 @Composable
 fun PublicRoomCard(room: PublicRoom, onClick: () -> Unit) {
+    val isFull = room.maxPlayers > 0 && room.players >= room.maxPlayers
+
     Card(
         modifier = Modifier.fillMaxWidth().clickable { onClick() },
         colors = CardDefaults.cardColors(containerColor = DarkSurface),
-        shape = RoundedCornerShape(12.dp)
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, Color.DarkGray.copy(alpha = 0.3f))
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
             horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(sanitizeText(room.roomName), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
-                Spacer(Modifier.height(4.dp))
-                Text("节点: ${sanitizeText(room.node)} | 人数: ${room.players}/${room.maxPlayers}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text(
+                    sanitizeText(room.roomName),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = if (isFull) Color.Gray else Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("节点: ${sanitizeText(room.node)}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    Spacer(Modifier.width(8.dp))
+                    Box(Modifier.size(4.dp).background(Color.DarkGray, CircleShape))
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        if (isFull) "已满员" else "游戏中",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (isFull) MaterialTheme.colorScheme.error else NeonGreen
+                    )
+                }
             }
-            Icon(Icons.Default.Public, contentDescription = null, tint = NeonGreen)
+
+            // 右侧人数徽章
+            Surface(
+                color = if (isFull) Color(0x33FF5252) else NeonGreen.copy(alpha = 0.15f),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "${room.players}/${room.maxPlayers}",
+                        color = if (isFull) MaterialTheme.colorScheme.error else NeonGreen,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp
+                    )
+                }
+            }
         }
     }
 }

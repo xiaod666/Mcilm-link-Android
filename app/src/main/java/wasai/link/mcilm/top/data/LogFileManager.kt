@@ -45,8 +45,11 @@ object LogFileManager {
     private val tokenRegex = Regex("\\bmci_[a-zA-Z0-9]{10,}\\b")
     private val ipRegex = Regex("\\b(?:(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)\\b")
 
-    // 匹配是否是错误/崩溃日志的关键字
-    private val errorKeywords = listOf("ERROR", "Exception", "fatal", "崩溃", "报错", "NullPointer")
+    // 扩展错误/崩溃关键字，覆盖常见的网络失败、超时等
+    private val errorKeywords = listOf(
+        "[Error]", "ERROR", "Exception", "fatal", "崩溃", "报错", "NullPointer",
+        "失败", "异常", "超时", "timeout", "refused", "disconnect", "断开"
+    )
 
     @Synchronized
     fun init(context: Context) {
@@ -54,16 +57,7 @@ object LogFileManager {
 
         val dir = try {
             context.getExternalFilesDir("logs")?.apply {
-                if (!exists()) {
-                    if (!mkdirs()) {
-                        Log.e(TAG, "Failed to create log dir")
-                        return
-                    }
-                }
-                if (!canWrite()) {
-                    Log.e(TAG, "Log dir is not writable")
-                    return
-                }
+                if (!exists()) mkdirs()
             }
         } catch (t: Throwable) {
             Log.e(TAG, "getExternalFilesDir failed", t)
@@ -75,14 +69,12 @@ object LogFileManager {
         logDir = dir
         debugFile = File(dir, "mcilmlinkandroid_debug.log")
 
-        // 时间戳精确到毫秒，防止同一秒内冷启动两次导致覆盖
         val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.getDefault()).apply {
             timeZone = this@LogFileManager.timeZone
         }.format(Date())
 
         currentFile = File(dir, "mcilmlinkandroid_$timestamp.log")
 
-        // 初始化时立刻创建空文件，确保用户一启动就能分享
         try {
             if (!currentFile!!.exists()) currentFile!!.createNewFile()
             if (!debugFile!!.exists()) debugFile!!.createNewFile()
@@ -92,12 +84,7 @@ object LogFileManager {
 
         isInitialized = true
 
-        // 启动后台协程清理旧日志
-        scope.launch {
-            cleanOldSessionLogs(dir)
-        }
-
-        // 启动后台协程消费常规日志队列
+        scope.launch { cleanOldSessionLogs(dir) }
         scope.launch {
             for (msg in logChannel) {
                 writeToFile(msg)
@@ -105,85 +92,76 @@ object LogFileManager {
         }
     }
 
-    /**
-     * 强制记录异常堆栈到 debug.log 及当前 session log
-     */
-    fun writeCrash(throwable: Throwable) {
+    /** 强制记录异常堆栈到 debug.log */
+    fun writeCrash(throwable: Throwable, customMsg: String? = null) {
         if (!isInitialized) return
         try {
             val sw = StringWriter()
             throwable.printStackTrace(PrintWriter(sw))
             val stackTrace = sw.toString()
-
-            var safeTrace = tokenRegex.replace(stackTrace, "mci_***")
-            safeTrace = ipRegex.replace(safeTrace, "*.*.*.*")
+            val safeTrace = ipRegex.replace(tokenRegex.replace(stackTrace, "mci_***"), "*.*.*.*")
 
             val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).apply { timeZone = this@LogFileManager.timeZone }
             val time = sdf.format(Date())
-            val crashLine = "$time | [CRITICAL] CRASH: ${throwable.message}\n$safeTrace\n"
+            val msg = customMsg ?: throwable.message ?: "Unknown Error"
+            val crashLine = "$time | [CRITICAL] CRASH: $msg\n$safeTrace\n"
 
-            // 同步追加
             synchronized(this) {
-                val dbgFile = debugFile
-                if (dbgFile != null) {
-                    if (dbgFile.length() > MAX_DEBUG_FILE_SIZE) {
-                        rotateDebugLog(dbgFile)
-                    }
-                    dbgFile.appendText(crashLine)
+                debugFile?.let {
+                    if (it.length() > MAX_DEBUG_FILE_SIZE) rotateDebugLog(it)
+                    it.appendText(crashLine)
                 }
-
-                val file = currentFile
-                if (file != null) {
-                    file.appendText(crashLine)
-                }
+                currentFile?.appendText(crashLine)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Write crash failed", e)
         }
     }
 
+    /** 业务层主动捕获的普通 Error 日志，强制双写 */
+    fun writeError(msg: String) {
+        if (!isInitialized) return
+        val safeMsg = sanitize(msg)
+        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).apply { timeZone = this@LogFileManager.timeZone }
+        val logLine = "${sdf.format(Date())} | $safeMsg\n"
+        synchronized(this) {
+            debugFile?.let {
+                if (it.length() > MAX_DEBUG_FILE_SIZE) rotateDebugLog(it)
+                it.appendText(logLine)
+            }
+            currentFile?.appendText(logLine)
+        }
+    }
+
     fun sanitize(msg: String): String {
         var safeMsg = msg.replace("\r", " ").replace("\n", " ")
-        safeMsg = passJsonRegex.replace(safeMsg) { m ->
-            "${m.groupValues[1]}***${m.groupValues[3]}"
-        }
-        safeMsg = passEqRegex.replace(safeMsg) { m ->
-            "${m.groupValues[1]}***"
-        }
+        safeMsg = passJsonRegex.replace(safeMsg) { m -> "${m.groupValues[1]}***${m.groupValues[3]}" }
+        safeMsg = passEqRegex.replace(safeMsg) { m -> "${m.groupValues[1]}***" }
         safeMsg = tokenRegex.replace(safeMsg, "mci_***")
         safeMsg = ipRegex.replace(safeMsg, "*.*.*.*")
 
-        if (safeMsg.length > 500) {
-            safeMsg = safeMsg.take(500) + "...(内容过长截断)"
+        if (safeMsg.length > 800) { // 放宽了长度限制
+            safeMsg = safeMsg.take(800) + "...(内容过长截断)"
         }
         return safeMsg
     }
 
     fun write(msg: String) {
         if (!isInitialized) return
-        val safeMsg = sanitize(msg)
-        logChannel.trySend(safeMsg)
+        logChannel.trySend(sanitize(msg))
     }
 
-    fun getLogFile(): File? {
-        return if (isInitialized) currentFile else null
-    }
-
-    fun getDebugFile(): File? {
-        return if (isInitialized) debugFile else null
-    }
+    fun getLogFile(): File? = if (isInitialized) currentFile else null
+    fun getDebugFile(): File? = if (isInitialized) debugFile else null
 
     private fun writeToFile(msg: String) {
         if (!isInitialized) return
-
         try {
             val file = currentFile ?: return
-
             val isError = msg.contains("[CRITICAL]") || errorKeywords.any { msg.contains(it, ignoreCase = true) }
 
             val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).apply { timeZone = this@LogFileManager.timeZone }
-            val time = sdf.format(Date())
-            val logLine = "$time | $msg\n"
+            val logLine = "${sdf.format(Date())} | $msg\n"
 
             synchronized(this) {
                 if (file.length() > MAX_SESSION_FILE_SIZE) {
@@ -194,12 +172,9 @@ object LogFileManager {
                 file.appendText(logLine)
 
                 if (isError) {
-                    val dbgFile = debugFile
-                    if (dbgFile != null) {
-                        if (dbgFile.length() > MAX_DEBUG_FILE_SIZE) {
-                            rotateDebugLog(dbgFile)
-                        }
-                        dbgFile.appendText(logLine)
+                    debugFile?.let {
+                        if (it.length() > MAX_DEBUG_FILE_SIZE) rotateDebugLog(it)
+                        it.appendText(logLine)
                     }
                 }
             }
@@ -211,12 +186,8 @@ object LogFileManager {
     private fun rotateDebugLog(dbgFile: File) {
         try {
             val oldFile = File(logDir, "mcilmlinkandroid_debug_old.log")
-            if (oldFile.exists()) {
-                oldFile.delete()
-            }
-            if (!dbgFile.renameTo(oldFile)) {
-                dbgFile.delete()
-            }
+            if (oldFile.exists()) oldFile.delete()
+            if (!dbgFile.renameTo(oldFile)) dbgFile.delete()
             dbgFile.createNewFile()
         } catch (e: Exception) {
             Log.e(TAG, "Rotate debug log failed", e)
@@ -229,11 +200,8 @@ object LogFileManager {
             if (files != null && files.size > MAX_SESSION_FILES) {
                 val sorted = files.sortedBy { it.lastModified() }
                 val deleteCount = sorted.size - MAX_SESSION_FILES
-
                 for (i in 0 until deleteCount) {
-                    if (sorted[i].name != currentFile?.name) {
-                        sorted[i].delete()
-                    }
+                    if (sorted[i].name != currentFile?.name) sorted[i].delete()
                 }
             }
         } catch (e: Exception) {
