@@ -27,8 +27,6 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
@@ -58,7 +56,7 @@ fun LoginScreen(vm: MainViewModel, onLoginSuccess: () -> Unit) {
 
     var localRefreshTrigger by remember { mutableIntStateOf(0) }
 
-    // 【核心修复】去掉了 state.isLoading 依赖，防止网络请求引起整个登录页频繁重组导致崩溃
+    // 去掉了 state.isLoading 依赖，防止网络请求引起频繁重组
     val rememberedAccounts = remember(state.accountUpdateCounter, localRefreshTrigger) {
         vm.tokenManager.getRememberedAccounts()
     }
@@ -147,6 +145,7 @@ private fun AccountSelectionView(
                 val gracePeriod = 3L * 24 * 60 * 60 * 1000L
                 val checkInterval = 24L * 60 * 60 * 1000L
 
+                // 判定是否需要输入密码
                 val isForcePassword = cred.password.isBlank() ||
                         ((now > cred.lastManualLoginAt + gracePeriod) && (now - cred.lastAutoLoginAt >= checkInterval))
 
@@ -247,8 +246,6 @@ private fun TraditionalLoginView(
     var lastToastTime by remember { mutableStateOf(0L) }
 
     val focusManager = LocalFocusManager.current
-
-    // 【核心修复】注释掉了强制自动聚焦弹键盘的代码，避免了模拟器/部分机型在输入法弹出时闪退
 
     val checkLimit: (String, Int, String) -> String = { text, max, name ->
         if (text.length > max) {

@@ -9,7 +9,6 @@ import android.net.NetworkRequest
 import androidx.core.content.edit
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -18,6 +17,7 @@ import org.json.JSONObject
 import wasai.link.mcilm.top.link.MciLmNative
 import wasai.link.mcilm.top.network.RateLimitException
 import java.io.File
+import kotlin.time.Duration.Companion.milliseconds // 👈 修复 Long 重载警告
 import kotlin.time.Duration.Companion.seconds
 
 // ===== 网络与账号模块 =====
@@ -37,7 +37,7 @@ internal fun MainViewModel.registerNetworkCallback() {
             _uiEvent.tryEmit(UiEvent.ShowSnackbar("网络连接已断开，5 秒缓冲期...", isLong = true))
             networkLostJob?.cancel()
             networkLostJob = viewModelScope.launch {
-                delay(5000L)
+                delay(5000.milliseconds) // 👈 修复
                 if (wasOffline && (_uiState.value.isHosting || _uiState.value.isJoining)) {
                     _uiEvent.tryEmit(UiEvent.ShowSnackbar("网络持续断开，已结束联机", isLong = true))
                     stopSession()
@@ -62,7 +62,6 @@ internal fun MainViewModel.login(account: String, password: String, rememberMe: 
         try {
             val result = repo.loginAndGetPermanentToken(account, password)
             result.onSuccess {
-                // 记录当前登录账号
                 tokenManager.saveCurrentAccount(account)
 
                 if (isSilent) {
@@ -86,7 +85,6 @@ internal fun MainViewModel.login(account: String, password: String, rememberMe: 
                     _uiEvent.tryEmit(UiEvent.ShowSnackbar("您操作得太快啦", isLong = true))
                 } else {
                     if (isSilent) {
-                        // 【核心修复】静默登录失败，强制作废该账号的密码并通知 UI 刷新
                         tokenManager.invalidateAccountPassword(account)
                         _uiState.value = _uiState.value.copy(accountUpdateCounter = _uiState.value.accountUpdateCounter + 1)
                         _uiEvent.tryEmit(UiEvent.ShowSnackbar("免密登录已失效，请重新输入密码", isLong = true))
@@ -225,7 +223,7 @@ internal fun MainViewModel.resolveNodeName(server: String): String {
 }
 
 internal fun MainViewModel.isPortAvailable(port: Int): Boolean {
-    return try { java.net.ServerSocket(port).use { true } } catch (e: Exception) { false }
+    return try { java.net.ServerSocket(port).use { true } } catch (_: Exception) { false } // 👈 修复未使用的 e
 }
 
 internal fun MainViewModel.startPatrol() {
@@ -311,7 +309,7 @@ internal fun MainViewModel.fetchNetworkStatus() {
 internal fun MainViewModel.switchNetworkMode(isP2P: Boolean) {
     viewModelScope.launch(Dispatchers.IO) {
         MciLmNative.linkCommand(if (isP2P) "p2p" else "relay")
-        delay(500)
+        delay(500.milliseconds) // 👈 修复
         fetchNetworkStatus()
     }
 }
@@ -369,11 +367,7 @@ internal fun MainViewModel.overrideToken(newToken: String) {
         return
     }
     tokenManager.overrideToken(newToken.trim())
-
-    // 【核心修复】清空当前绑定的账号标记，防止后续用空字符串去清理密码导致漏网之鱼
-    // 采用保存 "" 的方式，配合 getCurrentAccount() 返回的可能是 ""，在业务层使用 isNullOrBlank 进行拦截
     tokenManager.saveCurrentAccount("")
-
     _uiEvent.tryEmit(UiEvent.ShowSnackbar("Token 已覆盖，请重启 App 生效"))
     MciLmNative.logApp("开发者强制覆盖了 Token，并清理了本地当前账号标记")
 }

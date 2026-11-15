@@ -29,7 +29,8 @@ class TokenManager(context: Context) {
             Log.e("TokenManager", "安全存储初始化失败，尝试清理可能损坏的加密文件并重建", t)
             try {
                 val prefsFile = appContext.getSharedPreferences("mcilm_secure_prefs", Context.MODE_PRIVATE)
-                prefsFile.edit().clear().commit()
+                // 使用 KTX 优化 commit 写入
+                prefsFile.edit(commit = true) { clear() }
 
                 val masterKey = MasterKey.Builder(appContext)
                     .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
@@ -52,14 +53,14 @@ class TokenManager(context: Context) {
     }
 
     fun getToken(): String? {
-        return try { sharedPreferences.getString("mci_token", null)?.takeIf { it.isNotBlank() } } catch (t: Throwable) { null }
+        return try { sharedPreferences.getString("mci_token", null)?.takeIf { it.isNotBlank() } } catch (_: Throwable) { null }
     }
 
     fun saveCurrentAccount(account: String) {
         try { sharedPreferences.edit { putString("current_account", account) } } catch (_: Throwable) {}
     }
 
-    fun getCurrentAccount(): String? = try { sharedPreferences.getString("current_account", null) } catch (t: Throwable) { null }
+    fun getCurrentAccount(): String? = try { sharedPreferences.getString("current_account", null) } catch (_: Throwable) { null }
 
     fun clearToken() {
         try {
@@ -222,7 +223,6 @@ class TokenManager(context: Context) {
         }
     }
 
-    // 【新增】如果无法确定当前账号，直接作废所有本地免密
     @Synchronized
     fun invalidateAllPasswords() {
         val accounts = readRememberedAccountsOrNull() ?: return
