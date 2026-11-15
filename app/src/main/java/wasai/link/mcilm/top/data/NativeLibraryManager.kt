@@ -17,7 +17,6 @@ import java.util.concurrent.TimeUnit
 
 class NativeLibraryManager(private val context: Context) {
     private val tag = "NativeLibManager"
-
     private val blockUpdateOnEmulator = true
 
     private val client = OkHttpClient.Builder()
@@ -114,7 +113,8 @@ class NativeLibraryManager(private val context: Context) {
             warningMsg = "检测到内核连续启动异常，已自动为您回退到安全版本。"
         }
 
-        prefs.edit { putInt("load_fail_count", failCount) }
+        // 修复 P0-1：保证熔断计数立即落盘
+        prefs.edit(commit = true) { putInt("load_fail_count", failCount) }
 
         val localVersion = prefs.getString("last_kernel_version", "0.0.0") ?: "0.0.0"
         val currentPath = if (privateFile.exists()) privateFile.absolutePath else null
@@ -172,7 +172,6 @@ class NativeLibraryManager(private val context: Context) {
                 }
 
                 if (tmpFile.exists() && verifyElf(tmpFile)) {
-                    // 【P0-2 修复】先备份旧库，失败可回滚
                     val bakFile = File(context.filesDir, "lib/libmcilm_link.so.bak")
                     if (bakFile.exists()) bakFile.delete()
                     if (privateFile.exists()) privateFile.renameTo(bakFile)
@@ -200,13 +199,17 @@ class NativeLibraryManager(private val context: Context) {
     }
 
     fun markHealthy() {
-        prefs.edit {
+        // 修复 P0-1：强制同步落盘
+        prefs.edit(commit = true) {
             putBoolean("is_attempting", false)
             putInt("load_fail_count", 0)
         }
     }
 
     fun markAttempting() {
-        prefs.edit { putBoolean("is_attempting", true) }
+        // 修复 P0-1：强制同步落盘
+        prefs.edit(commit = true) {
+            putBoolean("is_attempting", true)
+        }
     }
 }

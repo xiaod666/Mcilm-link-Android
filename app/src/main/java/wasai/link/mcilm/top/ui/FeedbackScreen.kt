@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -15,6 +14,7 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -30,10 +30,10 @@ import wasai.link.mcilm.top.viewmodel.*
 @Composable
 fun FeedbackScreen(vm: MainViewModel, onBack: () -> Unit) {
     val state by vm.uiState.collectAsStateWithLifecycle()
-    var tab by remember { mutableStateOf(0) }  // 0=提交 1=我的反馈
-    var category by remember { mutableStateOf("bug") }
-    var content by remember { mutableStateOf("") }
-    var contact by remember { mutableStateOf("") }
+    var tab by rememberSaveable { mutableIntStateOf(0) }  // 0=提交 1=我的反馈
+    var category by rememberSaveable { mutableStateOf("bug") }
+    var content by rememberSaveable { mutableStateOf("") }
+    var contact by rememberSaveable { mutableStateOf("") }
 
     LaunchedEffect(Unit) { vm.fetchFeedbackList() }
 
@@ -119,7 +119,7 @@ fun FeedbackScreen(vm: MainViewModel, onBack: () -> Unit) {
                                 label = { Text("反馈内容（5~1000 字）") },
                                 minLines = 5,
                                 modifier = Modifier.fillMaxWidth(),
-                                isError = content.isNotEmpty() && content.length < 5,
+                                isError = content.isNotEmpty() && content.trim().length < 5,
                                 supportingText = { Text("${content.length}/1000", modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.End) },
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = NeonGreen,
@@ -146,8 +146,13 @@ fun FeedbackScreen(vm: MainViewModel, onBack: () -> Unit) {
 
                     Button(
                         onClick = {
-                            vm.submitFeedback(category, content.trim(), contact.trim())
-                            content = ""; contact = ""
+                            vm.submitFeedback(category, content, contact) { success ->
+                                // 修复 P0-4：只有成功才清空
+                                if (success) {
+                                    content = ""
+                                    contact = ""
+                                }
+                            }
                         },
                         enabled = content.trim().length in 5..1000 && !state.isLoading,
                         modifier = Modifier.fillMaxWidth().height(50.dp),

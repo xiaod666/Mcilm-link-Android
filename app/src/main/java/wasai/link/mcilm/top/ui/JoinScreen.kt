@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -36,13 +37,13 @@ fun JoinScreen(vm: MainViewModel, onBack: () -> Unit) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
 
-    var roomIdInput by remember { mutableStateOf("") }
-    var passwordInput by remember { mutableStateOf("") }
-    var forceRelay by remember { mutableStateOf(false) }
-    var preferPeers by remember { mutableStateOf(false) }
-    var passwordVisible by remember { mutableStateOf(false) }
+    // 修复 P0-6：全部改为 rememberSaveable
+    var roomIdInput by rememberSaveable { mutableStateOf("") }
+    var passwordInput by rememberSaveable { mutableStateOf("") }
+    var forceRelay by rememberSaveable { mutableStateOf(false) }
+    var preferPeers by rememberSaveable { mutableStateOf(false) }
+    var passwordVisible by rememberSaveable { mutableStateOf(false) }
 
-    // ZXing 扫码结果回调
     val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
         if (result.contents != null) {
             val raw = result.contents.trim()
@@ -95,7 +96,6 @@ fun JoinScreen(vm: MainViewModel, onBack: () -> Unit) {
                 )
             }
 
-            // 预留麦克风预检接口
             val needMic = false
             if (needMic) {
                 pendingJoinAction = doJoin
@@ -129,7 +129,6 @@ fun JoinScreen(vm: MainViewModel, onBack: () -> Unit) {
         ) {
             Spacer(Modifier.height(16.dp))
 
-            // 房间 ID
             OutlinedTextField(
                 value = roomIdInput,
                 onValueChange = {
@@ -163,7 +162,6 @@ fun JoinScreen(vm: MainViewModel, onBack: () -> Unit) {
 
             Spacer(Modifier.height(16.dp))
 
-            // 房间密码
             OutlinedTextField(
                 value = passwordInput,
                 onValueChange = { passwordInput = checkLimit(it.replace("\n", ""), 20) },
@@ -182,10 +180,8 @@ fun JoinScreen(vm: MainViewModel, onBack: () -> Unit) {
                 enabled = !state.isLoading
             )
 
-            // ==================== 开发者模式专属：高级设置 ====================
             if (state.isDevMode) {
                 Spacer(Modifier.height(24.dp))
-
                 Text(
                     "高级设置",
                     style = MaterialTheme.typography.labelLarge,
@@ -193,7 +189,6 @@ fun JoinScreen(vm: MainViewModel, onBack: () -> Unit) {
                 )
                 Spacer(Modifier.height(8.dp))
 
-                // 强制中继
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
@@ -212,7 +207,6 @@ fun JoinScreen(vm: MainViewModel, onBack: () -> Unit) {
 
                 HorizontalDivider(color = Color.DarkGray.copy(alpha = 0.5f))
 
-                // 优先多跳
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
@@ -232,7 +226,6 @@ fun JoinScreen(vm: MainViewModel, onBack: () -> Unit) {
 
             Spacer(Modifier.height(32.dp))
 
-            // 加入房间按钮
             Button(
                 onClick = { trySubmit() },
                 modifier = Modifier.fillMaxWidth().height(50.dp),

@@ -68,7 +68,6 @@ fun HomeScreen(
         }
     }
 
-    // 加入公开房确认弹窗
     if (selectedRoomToJoin != null) {
         val room = selectedRoomToJoin!!
         AlertDialog(
@@ -109,27 +108,17 @@ fun HomeScreen(
         }
     ) { padding ->
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(horizontal = 16.dp)
+            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)
         ) {
             Spacer(Modifier.height(16.dp))
 
-            // ================= 顶部标题与图标 =================
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    "Mcilm 联机助手",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
+                Text("Mcilm 联机助手", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = Color.White)
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    // 公告铃铛
                     Box(modifier = Modifier.padding(end = 4.dp)) {
                         IconButton(onClick = onNavigateAnnouncements) {
                             Icon(Icons.Default.Notifications, contentDescription = "公告", tint = Color.LightGray)
@@ -151,7 +140,6 @@ fun HomeScreen(
                             }
                         }
                     }
-                    // 设置齿轮
                     IconButton(onClick = onNavigateSettings) {
                         Icon(Icons.Default.Settings, contentDescription = "设置", tint = Color.LightGray)
                     }
@@ -160,23 +148,15 @@ fun HomeScreen(
 
             Spacer(Modifier.height(16.dp))
 
-            // ================= 剩余时长卡片（渐变质感） =================
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(20.dp),
                 border = BorderStroke(1.dp, NeonGreen.copy(alpha = 0.3f))
             ) {
                 Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(
-                            Brush.linearGradient(
-                                colors = listOf(
-                                    DarkSurface,
-                                    NeonGreen.copy(alpha = 0.08f)
-                                )
-                            )
-                        )
+                    modifier = Modifier.fillMaxWidth().background(
+                        Brush.linearGradient(colors = listOf(DarkSurface, NeonGreen.copy(alpha = 0.08f)))
+                    )
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(20.dp),
@@ -190,20 +170,12 @@ fun HomeScreen(
                                 Text("当前时长余额", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
                             }
                             Spacer(Modifier.height(6.dp))
-                            Text(
-                                formatPlayTime(state.walletSeconds),
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = NeonGreen
-                            )
+                            Text(formatPlayTime(state.walletSeconds), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = NeonGreen)
                         }
                         Button(
                             onClick = { vm.checkIn() },
                             shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = NeonGreen.copy(alpha = 0.15f),
-                                contentColor = NeonGreen
-                            ),
+                            colors = ButtonDefaults.buttonColors(containerColor = NeonGreen.copy(alpha = 0.15f), contentColor = NeonGreen),
                             border = BorderStroke(1.dp, NeonGreen.copy(alpha = 0.5f))
                         ) {
                             Text("每日签到", fontWeight = FontWeight.Bold)
@@ -212,7 +184,6 @@ fun HomeScreen(
                 }
             }
 
-            // ================= 活动 Banner =================
             val unclaimedCount = state.activities.count { !it.claimed }
             if (unclaimedCount > 0) {
                 Spacer(Modifier.height(12.dp))
@@ -222,10 +193,7 @@ fun HomeScreen(
                     border = BorderStroke(1.dp, NeonGreen.copy(alpha = 0.3f)),
                     shape = RoundedCornerShape(14.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.Star, contentDescription = null, tint = NeonGreen)
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
@@ -239,29 +207,17 @@ fun HomeScreen(
 
             Spacer(Modifier.height(24.dp))
 
-            // ================= 联机入口 =================
             Text("开始联机", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
             Spacer(Modifier.height(12.dp))
 
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                EntryCard(
-                    modifier = Modifier.weight(1f), title = "创建房间", desc = "作为房主开服",
-                    icon = Icons.Default.AddCircle, onClick = onNavigateHost
-                )
-                EntryCard(
-                    modifier = Modifier.weight(1f), title = "加入房间", desc = "输入 ID 联机",
-                    icon = Icons.AutoMirrored.Filled.Login, onClick = onNavigateJoin
-                )
+                EntryCard(modifier = Modifier.weight(1f), title = "创建房间", desc = "作为房主开服", icon = Icons.Default.AddCircle, onClick = onNavigateHost)
+                EntryCard(modifier = Modifier.weight(1f), title = "加入房间", desc = "输入 ID 联机", icon = Icons.AutoMirrored.Filled.Login, onClick = onNavigateJoin)
             }
 
             Spacer(Modifier.height(24.dp))
 
-            // ================= 公开房间列表 =================
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(4.dp, 16.dp).background(NeonGreen, RoundedCornerShape(2.dp)))
                     Spacer(Modifier.width(8.dp))
@@ -281,12 +237,14 @@ fun HomeScreen(
                     }
                 }
             } else {
+                // 修复 P1-16：列表 distinctBy 去重
+                val uniqueRooms = remember(state.publicRooms) { state.publicRooms.distinctBy { it.roomId } }
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier.fillMaxWidth().weight(1f),
                     contentPadding = PaddingValues(bottom = 80.dp, top = 8.dp)
                 ) {
-                    items(items = state.publicRooms, key = { it.roomId }) { room ->
+                    items(items = uniqueRooms, key = { it.roomId }) { room ->
                         PublicRoomCard(room) {
                             if (!isValidRoomId(room.roomId)) {
                                 Toast.makeText(context, "房间信息异常", Toast.LENGTH_SHORT).show()
@@ -327,13 +285,9 @@ fun EntryCard(
         border = BorderStroke(1.dp, Color.DarkGray.copy(alpha = 0.5f))
     ) {
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(NeonGreen.copy(alpha = 0.05f), Color.Transparent)
-                    )
-                )
+            modifier = Modifier.fillMaxSize().background(
+                Brush.verticalGradient(colors = listOf(NeonGreen.copy(alpha = 0.05f), Color.Transparent))
+            )
         ) {
             Column(
                 modifier = Modifier.fillMaxSize().padding(16.dp),
@@ -352,7 +306,6 @@ fun EntryCard(
 @Composable
 fun PublicRoomCard(room: PublicRoom, onClick: () -> Unit) {
     val isFull = room.maxPlayers > 0 && room.players >= room.maxPlayers
-
     Card(
         modifier = Modifier.fillMaxWidth().clickable { onClick() },
         colors = CardDefaults.cardColors(containerColor = DarkSurface),
@@ -386,7 +339,6 @@ fun PublicRoomCard(room: PublicRoom, onClick: () -> Unit) {
                 }
             }
 
-            // 右侧人数徽章
             Surface(
                 color = if (isFull) Color(0x33FF5252) else NeonGreen.copy(alpha = 0.15f),
                 shape = RoundedCornerShape(8.dp)

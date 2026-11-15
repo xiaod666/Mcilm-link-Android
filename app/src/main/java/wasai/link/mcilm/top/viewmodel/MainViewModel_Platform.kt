@@ -27,7 +27,6 @@ internal fun MainViewModel.markAnnouncementRead(id: Int) {
     val current = _uiState.value.announcements
     val target = current.firstOrNull { it.id == id } ?: return
     if (target.read) return
-    // 乐观更新（先 UI 后网络）
     val updated = current.map { if (it.id == id) it.copy(read = true) else it }
     _uiState.value = _uiState.value.copy(
         announcements = updated,
@@ -91,7 +90,7 @@ internal fun MainViewModel.bindInviteCode(code: String) {
             .onSuccess { resp ->
                 val gainMin = resp.inviteeGain / 60
                 _uiEvent.tryEmit(UiEvent.ShowSnackbar("绑定成功！获得 $gainMin 分钟时长"))
-                fetchInviteInfo()  // 刷新 bound_code / earned_sec
+                fetchInviteInfo()
             }
             .onFailure { e ->
                 if (handleAuthError(e)) return@launch
@@ -113,25 +112,29 @@ internal fun MainViewModel.fetchFeedbackList() {
     }
 }
 
-internal fun MainViewModel.submitFeedback(category: String, content: String, contact: String) {
-    if (content.length < 5 || content.length > 1000) {
-        _uiEvent.tryEmit(UiEvent.ShowSnackbar("反馈内容需 5~1000 字")); return
+// 修复 P0-4：增加回调
+internal fun MainViewModel.submitFeedback(category: String, content: String, contact: String, onResult: (Boolean) -> Unit) {
+    if (content.trim().length < 5 || content.trim().length > 1000) {
+        _uiEvent.tryEmit(UiEvent.ShowSnackbar("反馈内容需 5~1000 字")); onResult(false); return
     }
-    if (contact.length > 64) {
-        _uiEvent.tryEmit(UiEvent.ShowSnackbar("联系方式不能超过 64 字")); return
+    if (contact.trim().length > 64) {
+        _uiEvent.tryEmit(UiEvent.ShowSnackbar("联系方式不能超过 64 字")); onResult(false); return
     }
-    if (isClickTooFast()) return
+    if (isClickTooFast()) { onResult(false); return }
+
     _uiState.value = _uiState.value.copy(isLoading = true, loadingMsg = "正在提交反馈...")
     viewModelScope.launch(Dispatchers.IO) {
-        repo.submitFeedback(category, content, contact.ifBlank { null })
+        repo.submitFeedback(category, content.trim(), contact.trim().ifBlank { null })
             .onSuccess {
                 _uiEvent.tryEmit(UiEvent.ShowSnackbar("反馈已提交，感谢您的支持"))
                 fetchFeedbackList()
+                onResult(true)
             }
             .onFailure { e ->
                 if (!handleAuthError(e)) {
                     _uiEvent.tryEmit(UiEvent.ShowSnackbar("提交失败: ${e.message}", isLong = true))
                 }
+                onResult(false)
             }
         _uiState.value = _uiState.value.copy(isLoading = false)
     }

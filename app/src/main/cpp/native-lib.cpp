@@ -27,9 +27,7 @@ typedef void  (*fn_free_string)(char*);
 typedef void  (*fn_set_log)(void (*cb)(const char*, void*), void*);
 typedef void  (*fn_set_event)(void (*cb)(const char*, const char*, void*), void*);
 typedef void  (*fn_set_discovery)(const char*, int);
-// [新增] link_set_extra
 typedef int   (*fn_set_extra)(const char*);
-// [新增] link_set_audio
 typedef void  (*fn_set_audio)(int (*)(char*, int, void*), int (*)(char*, int, void*), void*);
 
 static void* g_lib_handle = nullptr;
@@ -44,15 +42,15 @@ static fn_free_string g_free_string = nullptr;
 static fn_set_log g_set_log = nullptr;
 static fn_set_event g_set_event = nullptr;
 static fn_set_discovery g_set_discovery = nullptr;
-static fn_set_extra g_set_extra = nullptr;   // [新增]
-static fn_set_audio g_set_audio = nullptr;   // [新增]
+static fn_set_extra g_set_extra = nullptr;
+static fn_set_audio g_set_audio = nullptr;
 
 static JavaVM* g_vm = nullptr;
 static jclass g_native_class = nullptr;
 static jmethodID g_on_log_mid = nullptr;
 static jmethodID g_on_event_mid = nullptr;
-static jmethodID g_on_audio_read_mid = nullptr;   // [新增]
-static jmethodID g_on_audio_write_mid = nullptr;  // [新增]
+static jmethodID g_on_audio_read_mid = nullptr;
+static jmethodID g_on_audio_write_mid = nullptr;
 
 struct ScopedEnv {
     JNIEnv* env = nullptr;
@@ -96,7 +94,6 @@ static void on_event_cb(const char* kind, const char* json, void* /*user*/) {
     }
 }
 
-// [新增] 采集回调：引擎从宿主拉 16k/mono/16bit LE PCM
 static int audio_read_cb(char* buf, int n, void* /*user*/) {
     if (!g_native_class || !g_on_audio_read_mid) return -1;
     if (n <= 0) return 0;
@@ -115,7 +112,6 @@ static int audio_read_cb(char* buf, int n, void* /*user*/) {
     return read;
 }
 
-// [新增] 播放回调：引擎推 PCM 给宿主
 static int audio_write_cb(char* buf, int n, void* /*user*/) {
     if (!g_native_class || !g_on_audio_write_mid) return 0;
     if (n <= 0) return 0;
@@ -133,13 +129,11 @@ static int audio_write_cb(char* buf, int n, void* /*user*/) {
 
 extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     g_vm = vm;
-    LOGD("JNI_OnLoad called");
     return JNI_VERSION_1_6;
 }
 
 extern "C" JNIEXPORT void JNICALL JNI_OnUnload(JavaVM* /*vm*/, void* /*reserved*/) {
     if (g_lib_handle) {
-        LOGD("JNI_OnUnload: dlclose");
         dlclose(g_lib_handle);
         g_lib_handle = nullptr;
     }
@@ -155,24 +149,21 @@ extern "C" JNIEXPORT void JNICALL JNI_OnUnload(JavaVM* /*vm*/, void* /*reserved*
 extern "C" JNIEXPORT jint JNICALL
 Java_wasai_link_mcilm_top_link_MciLmNative_initLibrary(JNIEnv* env, jobject /* thiz */, jstring customPath) {
     const char* path = env->GetStringUTFChars(customPath, nullptr);
+    if (!path) return -1; // 修复 P0-2
 
     if (g_lib_handle) {
-        LOGD("Library already loaded, skipping.");
         env->ReleaseStringUTFChars(customPath, path);
         return 0;
     }
 
     if (strlen(path) == 0) {
-        LOGD("Loading builtin: libmcilm_link.so");
         g_lib_handle = dlopen("libmcilm_link.so", RTLD_NOW | RTLD_LOCAL);
     } else {
-        LOGD("Loading custom: %s", path);
         g_lib_handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
     }
     env->ReleaseStringUTFChars(customPath, path);
 
     if (!g_lib_handle) {
-        LOGE("dlopen failed: %s", dlerror());
         return -1;
     }
 
@@ -187,16 +178,11 @@ Java_wasai_link_mcilm_top_link_MciLmNative_initLibrary(JNIEnv* env, jobject /* t
     g_set_log = (fn_set_log) dlsym(g_lib_handle, "link_set_log");
     g_set_event = (fn_set_event) dlsym(g_lib_handle, "link_set_event");
     g_set_discovery = (fn_set_discovery) dlsym(g_lib_handle, "link_set_discovery");
-    // [新增] 可选符号，旧库缺失时对应功能 no-op
     g_set_extra = (fn_set_extra) dlsym(g_lib_handle, "link_set_extra");
     g_set_audio = (fn_set_audio) dlsym(g_lib_handle, "link_set_audio");
-    if (!g_set_extra) LOGE("link_set_extra symbol not found (old lib?)");
-    if (!g_set_audio) LOGE("link_set_audio symbol not found (old lib?)");
 
-    // 必选符号校验（不包含新加的可选符号，兼容旧库）
     if (!g_version || !g_host_start || !g_client_start || !g_query ||
         !g_command || !g_stop || !g_free_string || !g_set_log || !g_set_event || !g_set_discovery) {
-        LOGE("dlsym failed: some symbols missing");
         dlclose(g_lib_handle);
         g_lib_handle = nullptr;
         return -1;
@@ -205,7 +191,6 @@ Java_wasai_link_mcilm_top_link_MciLmNative_initLibrary(JNIEnv* env, jobject /* t
     if (!g_native_class) {
         jclass local_cls = env->FindClass("wasai/link/mcilm/top/link/MciLmNative");
         if (!local_cls) {
-            LOGE("FindClass MciLmNative failed");
             SAFE_EXCEPTION_CHECK(env);
             dlclose(g_lib_handle);
             g_lib_handle = nullptr;
@@ -218,17 +203,12 @@ Java_wasai_link_mcilm_top_link_MciLmNative_initLibrary(JNIEnv* env, jobject /* t
         g_on_audio_read_mid = env->GetStaticMethodID(g_native_class, "onAudioRead", "([B)I");
         g_on_audio_write_mid = env->GetStaticMethodID(g_native_class, "onAudioWrite", "([BI)I");
         if (!g_on_log_mid || !g_on_event_mid) {
-            LOGE("GetStaticMethodID failed (log/event)");
             SAFE_EXCEPTION_CHECK(env);
             env->DeleteGlobalRef(g_native_class);
             g_native_class = nullptr;
             dlclose(g_lib_handle);
             g_lib_handle = nullptr;
             return -1;
-        }
-        if (!g_on_audio_read_mid || !g_on_audio_write_mid) {
-            LOGE("GetStaticMethodID failed (audio) — audio disabled");
-            SAFE_EXCEPTION_CHECK(env);
         }
     }
     return 0;
@@ -269,11 +249,11 @@ extern "C" JNIEXPORT void JNICALL
 Java_wasai_link_mcilm_top_link_MciLmNative_linkSetDiscovery(JNIEnv* env, jobject /* thiz */, jstring token, jint thresholdMs) {
     if (!g_set_discovery) return;
     const char* c_token = env->GetStringUTFChars(token, nullptr);
+    if (!c_token) return;
     g_set_discovery(c_token, thresholdMs);
     env->ReleaseStringUTFChars(token, c_token);
 }
 
-// [新增] 注册/清除音频注入。返回 0 成功，-1 未加载符号
 extern "C" JNIEXPORT jint JNICALL
 Java_wasai_link_mcilm_top_link_MciLmNative_linkSetAudio(JNIEnv*, jobject /* thiz */, jboolean enable) {
     if (!g_set_audio) return -1;
@@ -282,11 +262,11 @@ Java_wasai_link_mcilm_top_link_MciLmNative_linkSetAudio(JNIEnv*, jobject /* thiz
     return 0;
 }
 
-// [新增] 附加参数（如 "minecraft=25565"）。空串 = 清除。
 extern "C" JNIEXPORT jint JNICALL
 Java_wasai_link_mcilm_top_link_MciLmNative_linkSetExtra(JNIEnv* env, jobject /* thiz */, jstring extras) {
     if (!g_set_extra) return -1;
     const char* s = env->GetStringUTFChars(extras, nullptr);
+    if (!s) return -1;
     int rc = g_set_extra(s);
     env->ReleaseStringUTFChars(extras, s);
     return rc;
@@ -295,13 +275,13 @@ Java_wasai_link_mcilm_top_link_MciLmNative_linkSetExtra(JNIEnv* env, jobject /* 
 extern "C" JNIEXPORT jint JNICALL
 Java_wasai_link_mcilm_top_link_MciLmNative_linkHostStart(JNIEnv* env, jobject /* thiz */, jstring server, jstring room, jstring key, jstring pass, jstring features, jstring ports, jstring sni, jint plain) {
     if (!g_host_start) return -1;
-    const char* s1 = env->GetStringUTFChars(server, nullptr);
-    const char* s2 = env->GetStringUTFChars(room, nullptr);
-    const char* s3 = env->GetStringUTFChars(key, nullptr);
-    const char* s4 = env->GetStringUTFChars(pass, nullptr);
-    const char* s5 = env->GetStringUTFChars(features, nullptr);
-    const char* s6 = env->GetStringUTFChars(ports, nullptr);
-    const char* s7 = env->GetStringUTFChars(sni, nullptr);
+    const char* s1 = env->GetStringUTFChars(server, nullptr); if (!s1) return -1;
+    const char* s2 = env->GetStringUTFChars(room, nullptr); if (!s2) { env->ReleaseStringUTFChars(server, s1); return -1; }
+    const char* s3 = env->GetStringUTFChars(key, nullptr); if (!s3) { env->ReleaseStringUTFChars(server, s1); env->ReleaseStringUTFChars(room, s2); return -1; }
+    const char* s4 = env->GetStringUTFChars(pass, nullptr); if (!s4) { env->ReleaseStringUTFChars(server, s1); env->ReleaseStringUTFChars(room, s2); env->ReleaseStringUTFChars(key, s3); return -1; }
+    const char* s5 = env->GetStringUTFChars(features, nullptr); if (!s5) { env->ReleaseStringUTFChars(server, s1); env->ReleaseStringUTFChars(room, s2); env->ReleaseStringUTFChars(key, s3); env->ReleaseStringUTFChars(pass, s4); return -1; }
+    const char* s6 = env->GetStringUTFChars(ports, nullptr); if (!s6) { env->ReleaseStringUTFChars(server, s1); env->ReleaseStringUTFChars(room, s2); env->ReleaseStringUTFChars(key, s3); env->ReleaseStringUTFChars(pass, s4); env->ReleaseStringUTFChars(features, s5); return -1; }
+    const char* s7 = env->GetStringUTFChars(sni, nullptr); if (!s7) { env->ReleaseStringUTFChars(server, s1); env->ReleaseStringUTFChars(room, s2); env->ReleaseStringUTFChars(key, s3); env->ReleaseStringUTFChars(pass, s4); env->ReleaseStringUTFChars(features, s5); env->ReleaseStringUTFChars(ports, s6); return -1; }
 
     int ret = g_host_start(s1, s2, s3, s4, s5, s6, s7, plain);
 
@@ -315,12 +295,12 @@ Java_wasai_link_mcilm_top_link_MciLmNative_linkHostStart(JNIEnv* env, jobject /*
 extern "C" JNIEXPORT jint JNICALL
 Java_wasai_link_mcilm_top_link_MciLmNative_linkClientStart(JNIEnv* env, jobject /* thiz */, jstring server, jstring room, jstring key, jstring pass, jstring ports, jstring sni, jboolean plain, jboolean forceRelay, jboolean preferPeers) {
     if (!g_client_start) return -1;
-    const char* s1 = env->GetStringUTFChars(server, nullptr);
-    const char* s2 = env->GetStringUTFChars(room, nullptr);
-    const char* s3 = env->GetStringUTFChars(key, nullptr);
-    const char* s4 = env->GetStringUTFChars(pass, nullptr);
-    const char* s5 = env->GetStringUTFChars(ports, nullptr);
-    const char* s6 = env->GetStringUTFChars(sni, nullptr);
+    const char* s1 = env->GetStringUTFChars(server, nullptr); if (!s1) return -1;
+    const char* s2 = env->GetStringUTFChars(room, nullptr); if (!s2) { env->ReleaseStringUTFChars(server, s1); return -1; }
+    const char* s3 = env->GetStringUTFChars(key, nullptr); if (!s3) { env->ReleaseStringUTFChars(server, s1); env->ReleaseStringUTFChars(room, s2); return -1; }
+    const char* s4 = env->GetStringUTFChars(pass, nullptr); if (!s4) { env->ReleaseStringUTFChars(server, s1); env->ReleaseStringUTFChars(room, s2); env->ReleaseStringUTFChars(key, s3); return -1; }
+    const char* s5 = env->GetStringUTFChars(ports, nullptr); if (!s5) { env->ReleaseStringUTFChars(server, s1); env->ReleaseStringUTFChars(room, s2); env->ReleaseStringUTFChars(key, s3); env->ReleaseStringUTFChars(pass, s4); return -1; }
+    const char* s6 = env->GetStringUTFChars(sni, nullptr); if (!s6) { env->ReleaseStringUTFChars(server, s1); env->ReleaseStringUTFChars(room, s2); env->ReleaseStringUTFChars(key, s3); env->ReleaseStringUTFChars(pass, s4); env->ReleaseStringUTFChars(ports, s5); return -1; }
 
     int ret = g_client_start(s1, s2, s3, s4, s5, s6, plain ? 1 : 0, forceRelay ? 1 : 0, preferPeers ? 1 : 0);
 
@@ -334,9 +314,9 @@ extern "C" JNIEXPORT jstring JNICALL
 Java_wasai_link_mcilm_top_link_MciLmNative_linkQuery(JNIEnv* env, jobject /* thiz */, jstring what) {
     if (!g_query) return env->NewStringUTF("");
     const char* s = env->GetStringUTFChars(what, nullptr);
+    if (!s) return env->NewStringUTF("");
     char* res = g_query(s);
     env->ReleaseStringUTFChars(what, s);
-
     jstring result = env->NewStringUTF(res ? res : "");
     if (res && g_free_string) g_free_string(res);
     return result;
@@ -346,9 +326,9 @@ extern "C" JNIEXPORT jstring JNICALL
 Java_wasai_link_mcilm_top_link_MciLmNative_linkCommand(JNIEnv* env, jobject /* thiz */, jstring line) {
     if (!g_command) return env->NewStringUTF("");
     const char* s = env->GetStringUTFChars(line, nullptr);
+    if (!s) return env->NewStringUTF("");
     char* res = g_command(s);
     env->ReleaseStringUTFChars(line, s);
-
     jstring result = env->NewStringUTF(res ? res : "");
     if (res && g_free_string) g_free_string(res);
     return result;

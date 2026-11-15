@@ -23,6 +23,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.mapSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -89,6 +90,24 @@ fun CustomFilterChip(
     )
 }
 
+private val HostSubmitArgsSaver = mapSaver(
+    save = { mapOf(
+        "metaTrim" to it.metaTrim, "features" to it.features, "port" to it.port,
+        "password" to it.password, "isPublic" to it.isPublic, "serverMode" to it.serverMode.name,
+        "customServer" to it.customServer, "minecraftPort" to it.minecraftPort,
+        "sni" to it.sni, "plain" to it.plain
+    ) },
+    restore = {
+        HostSubmitArgs(
+            metaTrim = it["metaTrim"] as String, features = it["features"] as String,
+            port = it["port"] as String, password = it["password"] as String,
+            isPublic = it["isPublic"] as Boolean, serverMode = ServerMode.valueOf(it["serverMode"] as String),
+            customServer = it["customServer"] as String, minecraftPort = it["minecraftPort"] as String,
+            sni = it["sni"] as String, plain = it["plain"] as Boolean
+        )
+    }
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HostScreen(vm: MainViewModel, onBack: () -> Unit) {
@@ -114,7 +133,7 @@ fun HostScreen(vm: MainViewModel, onBack: () -> Unit) {
         }
     }
 
-    var pendingHostArgs by remember {
+    var pendingHostArgs by rememberSaveable(stateSaver = HostSubmitArgsSaver) {
         mutableStateOf(
             HostSubmitArgs("", "", "", "", false, ServerMode.DEFAULT, "", "", "", false)
         )
@@ -247,7 +266,16 @@ fun HostScreen(vm: MainViewModel, onBack: () -> Unit) {
             TopAppBar(
                 title = { Text("创建房间") },
                 navigationIcon = {
-                    IconButton(onClick = { if (!state.isLoading) { vm.stopSession(); onBack() } }, enabled = !state.isLoading) {
+                    IconButton(onClick = {
+                        if (!state.isLoading) {
+                            // 修复 P1-8：走确认弹窗
+                            if (state.roomId != null) {
+                                showStopDialog = true
+                            } else {
+                                vm.stopSession(); onBack()
+                            }
+                        }
+                    }, enabled = !state.isLoading) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 },
@@ -314,15 +342,14 @@ fun HostScreen(vm: MainViewModel, onBack: () -> Unit) {
                         Spacer(Modifier.height(12.dp))
 
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            // 【新增】延迟监控 UI 展示
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("节点: ${state.serverEndpoint ?: "自动分配"}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                                 Spacer(Modifier.width(6.dp))
                                 if (state.nodePing >= 0) {
                                     val pingColor = when {
                                         state.nodePing < 60 -> NeonGreen
-                                        state.nodePing < 120 -> Color(0xFFFFD740) // 黄色
-                                        else -> MaterialTheme.colorScheme.error // 红色
+                                        state.nodePing < 120 -> Color(0xFFFFD740)
+                                        else -> MaterialTheme.colorScheme.error
                                     }
                                     Text("(${state.nodePing}ms)", style = MaterialTheme.typography.bodySmall, color = pingColor, fontWeight = FontWeight.Bold)
                                 }
