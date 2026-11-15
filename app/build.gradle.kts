@@ -8,9 +8,7 @@ android {
     namespace = "wasai.link.mcilm.top"
     compileSdk = 34
 
-    // 修复 P2-11：显式钉住 NDK 版本。
-    // ⚠️ 如果你本地 Android Studio 装的不是这个版本，请替换为实际版本号
-    // （SDK Manager → SDK Tools → NDK (Side by side) 可查）。
+    // 显式钉住 NDK 版本
     ndkVersion = "26.1.10909125"
 
     defaultConfig {
@@ -29,7 +27,10 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // 【核心修改】开启代码混淆与资源压缩
+            isMinifyEnabled = true
+            isShrinkResources = true
+
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -47,8 +48,7 @@ android {
 
     buildFeatures {
         compose = true
-        // 修复 P0-1 配套：AuthRepository 用到 BuildConfig.DEBUG 控制日志级别。
-        // AGP 8.x 默认 buildConfig=false，不显式开启会编译失败。
+        // AuthRepository 用到 BuildConfig.DEBUG 控制日志级别，必须开启
         buildConfig = true
     }
     composeOptions {
@@ -64,9 +64,7 @@ android {
 
     packaging {
         jniLibs {
-            // 修复 N3：useLegacyPackaging = true 让 so 安装时解压到磁盘（nativeLibraryDir），
-            // dlopen("libmcilm_link.so") 在所有设备上都能找到。
-            // false 时依赖 Android 对 APK 内 .so 的 mmap 支持，部分老设备/厂商 ROM 会失败。
+            // 让 so 安装时解压到磁盘，dlopen("libmcilm_link.so") 在所有设备上都能找到。
             useLegacyPackaging = true
         }
     }
