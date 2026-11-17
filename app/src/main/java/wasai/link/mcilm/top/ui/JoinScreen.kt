@@ -37,7 +37,6 @@ fun JoinScreen(vm: MainViewModel, onBack: () -> Unit) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
 
-    // 修复 P0-6：全部改为 rememberSaveable
     var roomIdInput by rememberSaveable { mutableStateOf("") }
     var passwordInput by rememberSaveable { mutableStateOf("") }
     var forceRelay by rememberSaveable { mutableStateOf(false) }

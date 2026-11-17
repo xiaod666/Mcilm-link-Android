@@ -53,10 +53,8 @@ fun LoginScreen(vm: MainViewModel, onLoginSuccess: () -> Unit) {
 
     var showTraditionalLogin by rememberSaveable { mutableStateOf(false) }
     var prefilledAccount by rememberSaveable { mutableStateOf("") }
-
     var localRefreshTrigger by remember { mutableIntStateOf(0) }
 
-    // 去掉了 state.isLoading 依赖，防止网络请求引起频繁重组
     val rememberedAccounts = remember(state.accountUpdateCounter, localRefreshTrigger) {
         vm.tokenManager.getRememberedAccounts()
     }
@@ -124,6 +122,7 @@ private fun AccountSelectionView(
         }
     }
 
+    // 整体使用 Column，让 LazyColumn 占据剩余空间，开源声明固定在最底部
     Column(
         modifier = Modifier.fillMaxSize().imePadding().padding(horizontal = 24.dp),
         verticalArrangement = Arrangement.Top,
@@ -133,22 +132,17 @@ private fun AccountSelectionView(
         Text("Mcilm 联机助手", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
         Spacer(Modifier.height(12.dp))
         Text("选择账号以继续", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
-
         Spacer(Modifier.height(32.dp))
 
         LazyColumn(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f), // 权重占满剩余空间
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             items(accounts, key = { it.account }) { cred ->
                 val now = System.currentTimeMillis()
                 val gracePeriod = 3L * 24 * 60 * 60 * 1000L
                 val checkInterval = 24L * 60 * 60 * 1000L
-
-                // 判定是否需要输入密码
-                val isForcePassword = cred.password.isBlank() ||
-                        ((now > cred.lastManualLoginAt + gracePeriod) && (now - cred.lastAutoLoginAt >= checkInterval))
-
+                val isForcePassword = cred.password.isBlank() || ((now > cred.lastManualLoginAt + gracePeriod) && (now - cred.lastAutoLoginAt >= checkInterval))
                 val isLoadingThis = loggingInAccount == cred.account
 
                 Card(
@@ -168,14 +162,10 @@ private fun AccountSelectionView(
                         ) {
                             Text(initial, color = NeonGreen, fontWeight = FontWeight.Bold, fontSize = 20.sp)
                         }
-
                         Spacer(Modifier.width(16.dp))
-
                         Column(
                             modifier = Modifier.weight(1f).clickable(enabled = loggingInAccount == null && !state.isLoading) {
-                                if (isForcePassword) {
-                                    onForcePassword(cred.account)
-                                } else {
+                                if (isForcePassword) onForcePassword(cred.account) else {
                                     loggingInAccount = cred.account
                                     vm.loginWithSpecificAccount(cred.account)
                                 }
@@ -195,14 +185,10 @@ private fun AccountSelectionView(
                                 )
                             }
                         }
-
                         if (isLoadingThis) {
                             CircularProgressIndicator(modifier = Modifier.size(24.dp), color = NeonGreen, strokeWidth = 2.dp)
                         } else {
-                            IconButton(
-                                onClick = { onDeleteAccount(cred.account) },
-                                enabled = loggingInAccount == null && !state.isLoading
-                            ) {
+                            IconButton(onClick = { onDeleteAccount(cred.account) }, enabled = loggingInAccount == null && !state.isLoading) {
                                 Icon(Icons.Default.Close, contentDescription = "删除账号", tint = Color.Gray, modifier = Modifier.size(20.dp))
                             }
                         }
@@ -224,9 +210,12 @@ private fun AccountSelectionView(
                     Spacer(Modifier.width(8.dp))
                     Text("使用其他账号登录", fontSize = 15.sp)
                 }
-                Spacer(Modifier.height(32.dp))
+                Spacer(Modifier.height(24.dp))
             }
         }
+
+        // 底部开源声明（固定在 LazyColumn 下方）
+        OpenSourceLink()
     }
 }
 
@@ -270,6 +259,7 @@ private fun TraditionalLoginView(
         }
     }
 
+    // 使用 Column + verticalScroll，并在底部加上 Spacer(Modifier.weight(1f)) 将开源声明推到屏幕最底部
     Column(
         modifier = Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp),
         verticalArrangement = Arrangement.Top,
@@ -415,5 +405,10 @@ private fun TraditionalLoginView(
                 Text("登录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             }
         }
+
+        Spacer(Modifier.weight(1f)) // 将底部开源声明推到最下面（如果没有键盘弹起的情况）
+
+        // 底部开源声明
+        OpenSourceLink()
     }
 }

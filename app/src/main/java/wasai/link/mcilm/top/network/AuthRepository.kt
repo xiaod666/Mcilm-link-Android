@@ -17,6 +17,7 @@ import java.util.concurrent.TimeUnit
 
 class RateLimitException(val userMsg: String) : Exception(userMsg)
 class TokenExpiredException(msg: String) : Exception(msg)
+class BannedException(msg: String) : Exception(msg)
 class BusinessException(val code: String, val userMsg: String) : Exception(userMsg)
 
 class AuthRepository(tokenManager: TokenManager) {
@@ -43,21 +44,30 @@ class AuthRepository(tokenManager: TokenManager) {
     fun getLocalToken(): String? = tokenManager.getToken()
     fun logout() = tokenManager.clearToken()
 
-    // 【彻底修复】只有真正的网络错误才宽容处理，401 必须认定为失效！
+    /**
+     * 账号状态检查。
+     * P0-5 修复：只有 401/403 判定为失效，其他（含 5xx、超时、网络错误）一律宽容放行。
+     * 否则服务端临时抖动会被误判为"账号被封禁"。
+     */
     suspend fun checkAccountStatus(): Boolean {
         val token = getLocalToken() ?: return true
         return try {
             api.getMe("Bearer $token")
             true
         } catch (e: HttpException) {
-            // 401 Unauthorized 或 403 Forbidden 一律视为失效
-            MciLmNative.logApp("Token 校验失败: HTTP ${e.code()}")
-            false
-        } catch (e: UnknownHostException) {
-            MciLmNative.logApp("断网启动，宽容放行")
-            true // 断网时无法校验，宽容放行，等联网后业务层会再拦截
+            when (e.code()) {
+                401, 403 -> {
+                    MciLmNative.logApp("账号状态检查: HTTP ${e.code()} 判定失效")
+                    false
+                }
+                else -> {
+                    MciLmNative.logApp("账号状态检查: HTTP ${e.code()} 非鉴权错误，宽容放行")
+                    true
+                }
+            }
         } catch (e: Exception) {
-            false // 其他异常默认拦截
+            MciLmNative.logApp("账号状态检查异常 ${e.javaClass.simpleName}: ${e.message}，宽容放行")
+            true
         }
     }
 
@@ -67,7 +77,9 @@ class AuthRepository(tokenManager: TokenManager) {
             val meResp = api.getMe("Bearer ${loginResp.token}")
             tokenManager.saveToken(meResp.apiToken)
             Result.success(meResp.apiToken)
-        } catch (e: Exception) { Result.failure(handleException(e)) }
+        } catch (e: Exception) {
+            Result.failure(handleException(e))
+        }
     }
 
     suspend fun getRoomTime(): Result<RoomTimeResponse> {
@@ -86,7 +98,9 @@ class AuthRepository(tokenManager: TokenManager) {
                 if (errorBody?.contains("already") == true) Result.success(CheckInResponse(0L, 0L))
                 else Result.failure(handleException(e))
             } else Result.failure(handleException(e))
-        } catch (e: Exception) { Result.failure(handleException(e)) }
+        } catch (e: Exception) {
+            Result.failure(handleException(e))
+        }
     }
 
     suspend fun bindRoom(roomId: String) {
@@ -94,7 +108,9 @@ class AuthRepository(tokenManager: TokenManager) {
         try {
             val resp = api.bindRoom("Bearer $token", BindRequest(roomId))
             if (!resp.isSuccessful) MciLmNative.logApp("bindRoom 失败: HTTP ${resp.code()}")
-        } catch (e: Exception) { MciLmNative.logApp("bindRoom 异常: ${e.message}") }
+        } catch (e: Exception) {
+            MciLmNative.logApp("bindRoom 异常: ${e.message}")
+        }
     }
 
     suspend fun getSponsor(): Result<SponsorResponse> {
@@ -225,7 +241,7 @@ class AuthRepository(tokenManager: TokenManager) {
                     tokenManager.clearToken()
                     TokenExpiredException(serverMsg ?: "登录已过期，请重新登录")
                 }
-                403 -> Exception("账号已被封禁：$errorMsg")
+                403 -> BannedException("账号已被封禁：$errorMsg")
                 502, 503, 504 -> Exception("服务器响应超时或正在维护，请稍后重试")
                 else -> Exception(errorMsg)
             }

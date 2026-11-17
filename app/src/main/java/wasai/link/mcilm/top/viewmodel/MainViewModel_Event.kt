@@ -25,41 +25,34 @@ internal fun MainViewModel.observeEvents() {
                             isHosting = true, roomId = rid,
                             roomPassword = pwd,
                             isLoading = false,
-                            serverEndpoint = resolveNodeName(p?.server ?: ""), localPort = p?.ports ?: "25565"
+                            serverEndpoint = resolveNodeName(p?.server ?: ""),
+                            localPort = p?.ports ?: "25565"
                         )
                         viewModelScope.launch(Dispatchers.IO) { repo.bindRoom(rid) }
                         startPatrol()
-                        reconnectDeferred?.complete(true)
                     }
                 }
+
                 is MciLmNative.Event.Terminal -> {
                     stopPatrol()
-                    reconnectDeferred?.complete(false)
-
                     if (AudioEngine.isRunning()) {
                         MciLmNative.linkSetAudio(false)
                         AudioEngine.stop()
                     }
+
                     var reason = ""
                     try {
                         val o = JSONObject(event.raw)
                         reason = o.optString("reason", "")
                     } catch (_: Exception) {}
 
-                    if (event.kind == "fatal") {
-                        MciLmNative.linkStop()
-                        if (lastHostParams != null || lastJoinParams != null) {
-                            _uiEvent.tryEmit(UiEvent.ShowSnackbar("网络异常断开，正在尝试重连...", isLong = true))
-                            attemptReconnect()
-                            return@collect
-                        }
-                    }
-
+                    // P0-3 修复：fatal 不再自动重连。任何终止事件都交给用户手动处理。
                     val msg = when (event.kind) {
                         "kicked" -> "您已被房主踢出房间" + if (reason.isNotBlank()) "（$reason）" else ""
                         "banned" -> "您的账号已被封禁/禁入，无法继续联机" + if (reason.isNotBlank()) "（$reason）" else ""
                         "room_closed" -> "房间已关闭/解散"
-                        "fatal" -> "发生严重错误，联机已断开" + if (reason.isNotBlank()) "（$reason）" else ""
+                        "fatal" -> "联机发生严重错误，已断开。请点击重试" +
+                                if (reason.isNotBlank()) "（$reason）" else ""
                         else -> "会话已终止 (${event.kind})"
                     }
                     _uiEvent.tryEmit(UiEvent.ShowSnackbar(msg, isLong = true))
@@ -70,18 +63,19 @@ internal fun MainViewModel.observeEvents() {
                         members = emptyList(), serverEndpoint = null, localPort = null,
                         chatHistory = emptyList(), isVoiceActive = false, nodePing = -1
                     )
+                    // 保留 lastHostParams / lastJoinParams，让用户能通过 retryLastAction() 手动重试
                     viewModelScope.launch(Dispatchers.IO) { MciLmNative.linkStop() }
                 }
+
                 is MciLmNative.Event.Raw -> handleRawEvent(event)
                 else -> Unit
             }
         }
     }
 
-    // 【新增】监听底层日志，正则提取延迟数据并更新 UI
+    // 监听底层日志，提取 ping 数据
     viewModelScope.launch(Dispatchers.IO) {
         MciLmNative.logs.collect { log ->
-            // 匹配类似于 "(45ms," 或 "(45ms)" 的格式
             val pingRegex = Regex("""\((\d+)ms""")
             val match = pingRegex.find(log)
             if (match != null) {
@@ -109,9 +103,12 @@ internal fun MainViewModel.handleRawEvent(event: MciLmNative.Event.Raw) {
                     val lastMsg = history.lastOrNull()
                     if (lastMsg != null && lastMsg.isSelf && lastMsg.text == text) return
                 }
-                _uiState.value = _uiState.value.copy(chatHistory = history + ChatMessageInfo(from, text, isSelf, time))
+                _uiState.value = _uiState.value.copy(
+                    chatHistory = history + ChatMessageInfo(from, text, isSelf, time)
+                )
             } catch (_: Exception) {}
         }
+
         "file_sync_request" -> {
             try {
                 val o = JSONObject(event.json)
@@ -127,10 +124,13 @@ internal fun MainViewModel.handleRawEvent(event: MciLmNative.Event.Raw) {
 
                 if (taskId.isNotEmpty()) {
                     taskNamesCache[taskId] = name
-                    _uiState.value = _uiState.value.copy(pendingFileRequest = PendingFileRequest(taskId, name, from, bytes))
+                    _uiState.value = _uiState.value.copy(
+                        pendingFileRequest = PendingFileRequest(taskId, name, from, bytes)
+                    )
                 }
             } catch (_: Exception) {}
         }
+
         "file_sync_progress" -> {
             try {
                 val o = JSONObject(event.json)
@@ -138,17 +138,32 @@ internal fun MainViewModel.handleRawEvent(event: MciLmNative.Event.Raw) {
                 val bytes = o.optLong("bytes", 0L)
                 val totalBytes = o.optLong("total_bytes", 0L)
                 if (taskId.isNotEmpty()) {
-                    val newTasks = _uiState.value.fileTasks.map { t ->
-                        if (t.taskId == taskId) t.copy(
+                    val tasks = _uiState.value.fileTasks
+                    val existing = tasks.firstOrNull { it.taskId == taskId }
+                    val newTasks = if (existing != null) {
+                        tasks.map { t ->
+                            if (t.taskId == taskId) t.copy(
+                                bytes = bytes,
+                                totalBytes = if (totalBytes > 0) totalBytes else t.totalBytes,
+                                status = "transferring"
+                            ) else t
+                        }
+                    } else {
+                        // P1 修复：进度先于 fetchFileTasks 到达时，直接新增
+                        tasks + FileTaskInfo(
+                            taskId = taskId,
+                            name = taskNamesCache[taskId] ?: "任务_${taskId.takeLast(6)}",
+                            direction = "unknown",
+                            status = "transferring",
                             bytes = bytes,
-                            totalBytes = if (totalBytes > 0) totalBytes else t.totalBytes,
-                            status = "transferring"
-                        ) else t
+                            totalBytes = totalBytes
+                        )
                     }
                     _uiState.value = _uiState.value.copy(fileTasks = newTasks)
                 }
             } catch (_: Exception) {}
         }
+
         "file_sync_done" -> {
             try {
                 val o = JSONObject(event.json)
@@ -170,6 +185,7 @@ internal fun MainViewModel.handleRawEvent(event: MciLmNative.Event.Raw) {
             }
             fetchFileTasks()
         }
+
         "file_sync_error" -> {
             try {
                 val o = JSONObject(event.json)
@@ -187,6 +203,7 @@ internal fun MainViewModel.handleRawEvent(event: MciLmNative.Event.Raw) {
             }
             fetchFileTasks()
         }
+
         else -> Unit
     }
 }

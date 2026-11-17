@@ -12,6 +12,9 @@
 - 📌 **署名**：基于本项目的修改与分发，必须在明显位置保留原作者信息及原项目链接，并注明是否做出了修改。
 - 🔄 **相同方式共享**：基于本项目的二次开发（包括修改、增删功能），**必须**使用本协议（CC BY-NC-SA 4.0）进行开源，禁止闭源或转为专有软件。
 
+### APK备用下载地址(仅保留最新版,测试版除外)
+[https://wwbxw.lanzou.com/igO5x4g7xv2j密码:fabu](https://wwbxw.lanzou.com/igO5x4g7xv2j)
+
 ## 一、 基本信息
 
 - **应用名称**：Mcilm-link 安卓版
@@ -39,25 +42,31 @@
 ```text
 wasai.link.mcilm.top
  ├── data
- │    ├── TokenManager.kt          - 加密存储 Token（多账号、3+1 免密策略、安全作废保护）
  │    ├── AudioEngine.kt           - 语音采集播放引擎（AEC + NS，兼容性降级）
+ │    ├── GiteeUpdateSource.kt     - Gitee 更新源实现
+ │    ├── GitHubUpdateSource.kt    - GitHub 更新源实现
+ │    ├── LogFileManager.kt        - 本地日志脱敏、防注入截断与 Debug 强制双写
  │    ├── NativeLibraryManager.kt  - 内核动态库 API 下载、ELF校验、防崩溃熔断、旧库备份回滚
- │    └── LogFileManager.kt        - 本地日志脱敏、防注入截断与 Debug 强制双写
- ├── service
- │    └── LinkKeepAliveService.kt  - 前台保活服务（防止后台强杀断联）
+ │    ├── TokenManager.kt          - 加密存储 Token（多账号、3+1 免密策略、安全作废保护）
+ │    ├── UpdateManager.kt         - 应用内更新统一入口（双源轮询、版本比较、下载与签名校验）
+ │    ├── UpdateSource.kt          - 更新源抽象接口与公共工具方法
+ │    └── UpdateSourceUtil.kt      - 版本比较、release 解析、APK 筛选工具
+ ├── network
+ │    ├── ApiModels.kt             - 开放 API 数据实体（公告、活动、邀请、反馈等）
+ │    ├── ApiService.kt            - Retrofit 接口定义
+ │    ├── AuthRepository.kt        - 统一网络错误处理 (超时封禁限流)
+ │    ├── LinkKeepAliveService.kt  - 前台保活服务（保活逻辑）
+ │    ├── UpdateApi.kt             - 更新检查接口
+ │    └── UpdateModels.kt          - 更新相关数据模型
  ├── link
  │    └── MciLmNative.kt           - 核心 JNI 声明、事件分发、音频回调、日志流
- ├── network
- │    ├── ApiModels.kt             - 开放 API 数据实体（含公告、活动、邀请等）
- │    ├── ApiService.kt            - Retrofit 接口定义
- │    └── AuthRepository.kt        - 统一网络错误处理 (超时封禁限流)
  ├── ui
  │    ├── AppRoot.kt               - 全局路由、启动内核加载页、全局弹窗拦截、保活监听
  │    ├── LoginScreen.kt           - 登录页 (多账号列表、防输入法闪退、局部 Loading)
  │    ├── HomeScreen.kt            - 主页 (创建加入、公开房列表、铃铛红点、日志 FAB)
  │    ├── HostScreen.kt            - 房主开房页 (踢人、语音控制、节点延迟 UI 监控、参数防丢)
  │    ├── JoinScreen.kt            - 访客加入页 (平铺极简设计，高级设置折叠入开发者)
- │    ├── SettingsScreen.kt        - 设置页 (底部双按钮：退出登录与切换账号)
+ │    ├── SettingsScreen.kt        - 设置页（应用信息、检查更新、平台功能、退出登录与切换账号）
  │    ├── AnnouncementsScreen.kt   - 公告页（响应式邮箱式分栏布局）
  │    ├── ActivityScreen.kt        - 活动中心页（一键领取时长）
  │    ├── InviteScreen.kt          - 邀请好友页（二维码、链接分享）
@@ -69,15 +78,18 @@ wasai.link.mcilm.top
  │    └── theme/Theme.kt           - 暗黑科技主题
  ├── viewmodel
  │    ├── MainViewModel.kt         - 状态机核心骨架，持有 UiState 和核心变量
- │    ├── MainViewModel_Network.kt - 网络登录、401 安全熔断处理、签到与断网缓冲
- │    ├── MainViewModel_Event.kt   - 底层事件订阅、延迟日志解析、聊天文件分流
- │    ├── MainViewModel_Room.kt    - 房主访客联机控制、断线重连与异步等待
  │    ├── MainViewModel_Chat.kt    - 聊天收发、语音启停、成员踢人
+ │    ├── MainViewModel_Event.kt   - 底层事件订阅、延迟日志解析、聊天文件分流
  │    ├── MainViewModel_File.kt    - 文件同步、SAF 导出、大文件拦截、缓存清理
- │    └── MainViewModel_Platform.kt- 公告、活动、邀请、反馈业务逻辑
+ │    ├── MainViewModel_Network.kt - 网络登录、401 安全熔断处理、签到与断网缓冲
+ │    ├── MainViewModel_Platform.kt- 公告、活动、邀请、反馈业务逻辑
+ │    ├── MainViewModel_Room.kt    - 房主访客联机控制、断线重连与异步等待
+ │    ├── MainViewModel_Update.kt  - 版本检查、下载状态、更新提示逻辑
+ │    └── MainViewModel_Update.kt  - 更新相关状态管理（按实际文件名保留）
  └── cpp
       ├── native-lib.cpp           - JNI C++ 封装（严密 OOM 保护、防崩溃）
       └── CMakeLists.txt           - 构建配置 (仅包含 dl/log/android)
+```
 ## 四、 核心机制说明
 
 ### 1. 多账号管理与智能免密安全策略
@@ -147,6 +159,20 @@ wasai.link.mcilm.top
 - [ ] 优化 WebView 渲染长公告时的性能表现。
 
 # MciLm-link安卓版 更新日志
+
+## [1.6.3-beta] - 2026-11-17
+**核心主题：修正应用内更新版本判断并补充开源项目入口**
+
+### 🚀 新增与优化
+- **登录页开源地址**：已在登录界面加上开源地址。
+- **设置页检查更新**：在“应用信息”中提供手动检查更新按钮，可检查配置的 Release 仓库并提示检查结果。
+
+### 🐛 Bug 修复
+- **修正更新版本比较**：改为按版本名进行语义版本比较，不再将 `1.6.2 → 10602` 这样的转换值与 Android `versionCode`（如 `16`）比较，避免把旧版本误报为新版本。
+- **多更新源回退**：优先更新源返回不高于当前版本的发布时，继续检查下一个已配置源。
+- **修复签名校验函数编译错误**：将 `verifySignature` 改为代码块函数体，允许函数内部提前返回。
+
+---
 
 ## [1.6.2] - 2026-11-15
 **核心主题：安全防线查漏补缺、底层崩溃修复与混淆发包支持**

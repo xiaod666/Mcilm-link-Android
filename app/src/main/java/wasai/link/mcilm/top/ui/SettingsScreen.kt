@@ -27,7 +27,9 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.launch
 import wasai.link.mcilm.top.BuildConfig
+import wasai.link.mcilm.top.data.UpdateManager
 import wasai.link.mcilm.top.link.MciLmNative
 import wasai.link.mcilm.top.ui.theme.DarkSurface
 import wasai.link.mcilm.top.ui.theme.NeonGreen
@@ -48,9 +50,12 @@ fun SettingsScreen(
 ) {
     val state by vm.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     var isExternalLib by remember { mutableStateOf(File(context.filesDir, "lib/libmcilm_link.so").exists()) }
     var kernelVersion by remember { mutableStateOf(MciLmNative.linkVersion() ?: "未知版本") }
+    var checkingUpdate by remember { mutableStateOf(false) }
+
     LaunchedEffect(state.isDevMode) {
         isExternalLib = File(context.filesDir, "lib/libmcilm_link.so").exists()
         kernelVersion = MciLmNative.linkVersion() ?: "未知版本"
@@ -110,14 +115,61 @@ fun SettingsScreen(
             Spacer(Modifier.height(16.dp))
             Card(colors = CardDefaults.cardColors(containerColor = DarkSurface), shape = RoundedCornerShape(12.dp)) {
                 Column(modifier = Modifier.fillMaxWidth()) {
-                    Row(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
                         Text("应用版本", color = Color.Gray)
                         Text("${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})", color = Color.White)
                     }
+
                     HorizontalDivider(color = Color.DarkGray)
-                    Row(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
                         Text("内核版本", color = Color.Gray)
                         Text(kernelVersion, color = Color.White)
+                    }
+
+                    HorizontalDivider(color = Color.DarkGray)
+
+                    Button(
+                        onClick = {
+                            if (!checkingUpdate) {
+                                scope.launch {
+                                    checkingUpdate = true
+                                    try {
+                                        UpdateManager(context).checkForUpdate(force = true).fold(
+                                            onSuccess = { info ->
+                                                val message = if (info == null) {
+                                                    "当前已是最新版本"
+                                                } else {
+                                                    "发现新版本：${info.versionName} (${info.versionCode})"
+                                                }
+                                                Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                                            },
+                                            onFailure = { error ->
+                                                Toast.makeText(
+                                                    context,
+                                                    "检查更新失败：${error.message ?: "未知错误"}",
+                                                    Toast.LENGTH_LONG
+                                                ).show()
+                                            }
+                                        )
+                                    } finally {
+                                        checkingUpdate = false
+                                    }
+                                }
+                            }
+                        },
+                        enabled = !checkingUpdate,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                    ) {
+                        Text(if (checkingUpdate) "正在检查更新…" else "检查更新")
                     }
                 }
             }
@@ -135,6 +187,7 @@ fun SettingsScreen(
                         onClick = onNavigateAnnouncements
                     )
                     HorizontalDivider(color = Color.DarkGray)
+
                     // 活动中心
                     val unclaimedCount = state.activities.count { !it.claimed }
                     PlatformEntryRow(
@@ -142,6 +195,7 @@ fun SettingsScreen(
                         badgeText = if (unclaimedCount > 0) "$unclaimedCount" else null,
                         onClick = onNavigateActivity
                     )
+
                     // 邀请好友
                     if (state.inviteInfo?.settings?.enabled == true) {
                         HorizontalDivider(color = Color.DarkGray)
@@ -151,7 +205,9 @@ fun SettingsScreen(
                             onClick = onNavigateInvite
                         )
                     }
+
                     HorizontalDivider(color = Color.DarkGray)
+
                     // 意见反馈
                     PlatformEntryRow(
                         title = "意见反馈",
@@ -181,8 +237,10 @@ fun SettingsScreen(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text("当前加载模式", color = Color.Gray)
-                        Text(if (isExternalLib) "外置库 (私有目录)" else "内置库 (APK自带)",
-                            color = if (isExternalLib) NeonGreen else Color.White)
+                        Text(
+                            if (isExternalLib) "外置库 (私有目录)" else "内置库 (APK自带)",
+                            color = if (isExternalLib) NeonGreen else Color.White
+                        )
                     }
                     if (state.isDevMode) {
                         HorizontalDivider(color = Color.DarkGray)
@@ -201,7 +259,9 @@ fun SettingsScreen(
                                         Toast.makeText(context, "开发者模式已关闭", Toast.LENGTH_SHORT).show()
                                     },
                                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-                                ) { Text("关闭", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                                ) {
+                                    Text("关闭", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                                }
                             }
                         }
                     }
@@ -232,7 +292,9 @@ fun SettingsScreen(
                                 Toast.makeText(context, "阈值已更新", Toast.LENGTH_SHORT).show()
                             }) { Text("保存") }
                         }
+
                         Spacer(Modifier.height(16.dp))
+
                         Button(
                             onClick = { vm.clearPrivateLib() },
                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
@@ -240,6 +302,7 @@ fun SettingsScreen(
                         ) { Text("清理私有库缓存 (下次启动重载)") }
 
                         Spacer(Modifier.height(12.dp))
+
                         Button(
                             onClick = { showTokenDialog = true; tokenInput = ""; tokenVisible = false },
                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary),
@@ -247,6 +310,7 @@ fun SettingsScreen(
                         ) { Text("强制覆盖 Token") }
 
                         Spacer(Modifier.height(12.dp))
+
                         OutlinedButton(
                             onClick = {
                                 vm.rotateToken()
@@ -377,7 +441,11 @@ fun SettingsScreen(
                     devKeyInput = ""
                 }) { Text("验证") }
             },
-            dismissButton = { TextButton(onClick = { showDevDialog = false; devKeyInput = ""; showDevKey = false }) { Text("取消") } }
+            dismissButton = {
+                TextButton(onClick = { showDevDialog = false; devKeyInput = ""; showDevKey = false }) {
+                    Text("取消")
+                }
+            }
         )
     }
 
@@ -413,7 +481,9 @@ fun SettingsScreen(
                     tokenInput = ""
                 }) { Text("保存") }
             },
-            dismissButton = { TextButton(onClick = { showTokenDialog = false; tokenInput = "" }) { Text("取消") } }
+            dismissButton = {
+                TextButton(onClick = { showTokenDialog = false; tokenInput = "" }) { Text("取消") }
+            }
         )
     }
 }

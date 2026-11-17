@@ -15,32 +15,38 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import wasai.link.mcilm.top.link.MciLmNative
+import wasai.link.mcilm.top.network.BannedException
 import wasai.link.mcilm.top.network.RateLimitException
+import wasai.link.mcilm.top.network.TokenExpiredException
 import java.io.File
-import kotlin.time.Duration.Companion.milliseconds // 👈 修复 Long 重载警告
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 // ===== 网络与账号模块 =====
 
 internal fun MainViewModel.registerNetworkCallback() {
-    val networkRequest = NetworkRequest.Builder().addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).build()
+    val networkRequest = NetworkRequest.Builder()
+        .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        .build()
     val cb = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             if (wasOffline) {
                 wasOffline = false
                 networkLostJob?.cancel()
+                networkLostJob = null
                 _uiEvent.tryEmit(UiEvent.ShowSnackbar("网络已恢复"))
             }
         }
+
         override fun onLost(network: Network) {
             wasOffline = true
-            _uiEvent.tryEmit(UiEvent.ShowSnackbar("网络连接已断开，5 秒缓冲期...", isLong = true))
+            _uiEvent.tryEmit(UiEvent.ShowSnackbar("网络连接已断开，等待自动恢复...", isLong = true))
             networkLostJob?.cancel()
+            // P0-2 修复：仅做 UI 提示，不主动 stopSession()，会话销毁交给 SDK 或终止事件。
             networkLostJob = viewModelScope.launch {
-                delay(5000.milliseconds) // 👈 修复
+                delay(5000.milliseconds)
                 if (wasOffline && (_uiState.value.isHosting || _uiState.value.isJoining)) {
-                    _uiEvent.tryEmit(UiEvent.ShowSnackbar("网络持续断开，已结束联机", isLong = true))
-                    stopSession()
+                    _uiEvent.tryEmit(UiEvent.ShowSnackbar("网络持续断开，请检查网络连接", isLong = true))
                 }
             }
         }
@@ -51,7 +57,12 @@ internal fun MainViewModel.registerNetworkCallback() {
 
 // ==================== 登录与账号 ====================
 
-internal fun MainViewModel.login(account: String, password: String, rememberMe: Boolean, isSilent: Boolean = false) {
+internal fun MainViewModel.login(
+    account: String,
+    password: String,
+    rememberMe: Boolean,
+    isSilent: Boolean = false
+) {
     if (account.isBlank() || password.isBlank()) {
         _uiState.value = _uiState.value.copy(errorMsg = "账号密码不能为空")
         return
@@ -81,15 +92,29 @@ internal fun MainViewModel.login(account: String, password: String, rememberMe: 
                 fetchNodeNames()
             }.onFailure { e ->
                 _uiState.value = _uiState.value.copy(authState = AuthState.Unauthenticated, isLoading = false)
-                if (e is RateLimitException) {
-                    _uiEvent.tryEmit(UiEvent.ShowSnackbar("您操作得太快啦", isLong = true))
-                } else {
-                    if (isSilent) {
-                        tokenManager.invalidateAccountPassword(account)
-                        _uiState.value = _uiState.value.copy(accountUpdateCounter = _uiState.value.accountUpdateCounter + 1)
-                        _uiEvent.tryEmit(UiEvent.ShowSnackbar("免密登录已失效，请重新输入密码", isLong = true))
-                    } else {
-                        _uiState.value = _uiState.value.copy(errorMsg = e.message ?: "登录失败")
+                when (e) {
+                    is RateLimitException -> {
+                        _uiEvent.tryEmit(UiEvent.ShowSnackbar("您操作得太快啦", isLong = true))
+                    }
+                    is TokenExpiredException -> {
+                        // P1 修复：仅鉴权失效才清密码，网络错误不清
+                        if (isSilent) tokenManager.invalidateAccountPassword(account)
+                        _uiState.value = _uiState.value.copy(
+                            accountUpdateCounter = _uiState.value.accountUpdateCounter + 1
+                        )
+                        _uiEvent.tryEmit(UiEvent.ShowSnackbar("登录已失效，请重新输入密码", isLong = true))
+                    }
+                    is BannedException -> {
+                        // 封禁不清密码，解封后可继续用
+                        _uiState.value = _uiState.value.copy(errorMsg = e.message ?: "账号已被封禁")
+                    }
+                    else -> {
+                        // 网络错误：免密登录不清密码，静默失败
+                        if (isSilent) {
+                            _uiEvent.tryEmit(UiEvent.ShowSnackbar("网络异常，免密登录失败，请稍后重试", isLong = true))
+                        } else {
+                            _uiState.value = _uiState.value.copy(errorMsg = e.message ?: "登录失败")
+                        }
                     }
                 }
             }
@@ -141,7 +166,6 @@ internal fun MainViewModel.silentCheckInAndRefreshBalance() {
                 val hours = min / 60
                 val remainMin = min % 60
                 val timeStr = if (hours > 0) "${hours}小时${remainMin}分钟" else "${min}分钟"
-
                 _uiEvent.tryEmit(UiEvent.ShowSnackbar("今日签到成功，已获得 $timeStr 联机时长", isLong = true))
             }
         }.onFailure { err ->
@@ -163,7 +187,9 @@ internal fun MainViewModel.refreshSponsor() {
     viewModelScope.launch {
         repo.getSponsor()
             .onSuccess { s -> _uiState.value = _uiState.value.copy(roomMax = s.roomMax) }
-            .onFailure { e -> if (!handleAuthError(e)) MciLmNative.logApp("获取权益失败: ${e.message}") }
+            .onFailure { e ->
+                if (!handleAuthError(e)) MciLmNative.logApp("获取权益失败: ${e.message}")
+            }
     }
 }
 
@@ -175,7 +201,9 @@ internal fun MainViewModel.checkIn() {
             if (res.claimedSeconds > 0) {
                 val min = res.claimedSeconds / 60
                 _uiEvent.tryEmit(UiEvent.ShowSnackbar(if (min > 0) "签到成功！获得 $min 分钟时长" else "签到成功！"))
-            } else _uiEvent.tryEmit(UiEvent.ShowSnackbar("今日已签到"))
+            } else {
+                _uiEvent.tryEmit(UiEvent.ShowSnackbar("今日已签到"))
+            }
             refreshBalance()
         }.onFailure { e ->
             if (!handleAuthError(e)) {
@@ -223,7 +251,7 @@ internal fun MainViewModel.resolveNodeName(server: String): String {
 }
 
 internal fun MainViewModel.isPortAvailable(port: Int): Boolean {
-    return try { java.net.ServerSocket(port).use { true } } catch (_: Exception) { false } // 👈 修复未使用的 e
+    return try { java.net.ServerSocket(port).use { true } } catch (_: Exception) { false }
 }
 
 internal fun MainViewModel.startPatrol() {
@@ -264,7 +292,6 @@ internal fun MainViewModel.startPatrol() {
 internal fun MainViewModel.stopPatrol() {
     patrolJob?.cancel(); patrolJob = null
     reconnectJob?.cancel(); reconnectJob = null
-    reconnectDeferred = null
 }
 
 internal fun MainViewModel.fetchNetworkStatus() {
@@ -309,7 +336,7 @@ internal fun MainViewModel.fetchNetworkStatus() {
 internal fun MainViewModel.switchNetworkMode(isP2P: Boolean) {
     viewModelScope.launch(Dispatchers.IO) {
         MciLmNative.linkCommand(if (isP2P) "p2p" else "relay")
-        delay(500.milliseconds) // 👈 修复
+        delay(500.milliseconds)
         fetchNetworkStatus()
     }
 }

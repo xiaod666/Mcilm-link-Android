@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -33,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import wasai.link.mcilm.top.network.PublicRoom
+import wasai.link.mcilm.top.network.UpdateState
 import wasai.link.mcilm.top.ui.theme.DarkSurface
 import wasai.link.mcilm.top.ui.theme.NeonGreen
 import wasai.link.mcilm.top.viewmodel.*
@@ -49,6 +51,8 @@ fun HomeScreen(
     onNavigateActivity: () -> Unit = {},
 ) {
     val state by vm.uiState.collectAsStateWithLifecycle()
+    val updateState by vm.updateState.collectAsStateWithLifecycle()
+    val updateDialogVisible by vm.updateDialogVisible.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     var selectedRoomToJoin by remember { mutableStateOf<PublicRoom?>(null) }
@@ -94,6 +98,17 @@ fun HomeScreen(
         )
     }
 
+    // 更新对话框（发现新版本时显示）
+    if (updateDialogVisible) {
+        UpdateDialog(
+            state = updateState,
+            onDismiss = { vm.dismissUpdateDialog() },
+            onDownload = { vm.startDownloadUpdate() },
+            onInstall = { vm.installDownloadedApk() },
+            onCancelDownload = { vm.cancelDownloadUpdate() }
+        )
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         floatingActionButton = {
@@ -119,6 +134,7 @@ fun HomeScreen(
             ) {
                 Text("Mcilm 联机助手", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = Color.White)
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    // 公告铃铛（原有）
                     Box(modifier = Modifier.padding(end = 4.dp)) {
                         IconButton(onClick = onNavigateAnnouncements) {
                             Icon(Icons.Default.Notifications, contentDescription = "公告", tint = Color.LightGray)
@@ -140,6 +156,30 @@ fun HomeScreen(
                             }
                         }
                     }
+
+                    // 更新红点（新增，仅在发现新版本时显示）
+                    val hasUpdate = updateState is UpdateState.Available ||
+                            updateState is UpdateState.Downloaded
+                    if (hasUpdate) {
+                        Box(modifier = Modifier.padding(end = 4.dp)) {
+                            IconButton(onClick = { vm.showUpdateDialog() }) {
+                                Icon(
+                                    Icons.Default.SystemUpdate,
+                                    contentDescription = "发现新版本",
+                                    tint = NeonGreen
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .offset(x = (-8).dp, y = 8.dp)
+                                    .size(10.dp)
+                                    .background(MaterialTheme.colorScheme.error, CircleShape)
+                            )
+                        }
+                    }
+
+                    // 设置（原有）
                     IconButton(onClick = onNavigateSettings) {
                         Icon(Icons.Default.Settings, contentDescription = "设置", tint = Color.LightGray)
                     }
@@ -237,7 +277,6 @@ fun HomeScreen(
                     }
                 }
             } else {
-                // 修复 P1-16：列表 distinctBy 去重
                 val uniqueRooms = remember(state.publicRooms) { state.publicRooms.distinctBy { it.roomId } }
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -357,4 +396,120 @@ fun PublicRoomCard(room: PublicRoom, onClick: () -> Unit) {
             }
         }
     }
+}
+
+// ===== 更新对话框（内嵌，无需改 AppRoot） =====
+
+@Composable
+private fun UpdateDialog(
+    state: UpdateState,
+    onDismiss: () -> Unit,
+    onDownload: () -> Unit,
+    onInstall: () -> Unit,
+    onCancelDownload: () -> Unit
+) {
+    if (state is UpdateState.Idle || state is UpdateState.Checking || state is UpdateState.NotAvailable) return
+
+    AlertDialog(
+        onDismissRequest = {
+            // 下载中禁止关闭
+            if (state !is UpdateState.Downloading) onDismiss()
+        },
+        title = {
+            Text(
+                when (state) {
+                    is UpdateState.Available -> "发现新版本 ${state.info.versionName}"
+                    is UpdateState.Downloading -> "正在下载更新"
+                    is UpdateState.Downloaded -> "下载完成"
+                    is UpdateState.Error -> "更新失败"
+                    else -> "更新"
+                },
+                color = Color.White,
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            when (state) {
+                is UpdateState.Available -> {
+                    Column {
+                        Text(
+                            state.info.releaseNotes.ifBlank { "（无更新说明）" }.take(800),
+                            color = Color.LightGray,
+                            maxLines = 15,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "安装包大小：${formatBytes(state.info.apkSize)}",
+                            color = Color.Gray,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+                is UpdateState.Downloading -> {
+                    Column {
+                        // 自定义进度条（兼容 Material3 1.2.x，避免 API 差异）
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .background(Color.DarkGray, RoundedCornerShape(3.dp))
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth((state.progress / 100f).coerceIn(0f, 1f))
+                                    .height(6.dp)
+                                    .background(NeonGreen, RoundedCornerShape(3.dp))
+                            )
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            "${state.progress}%   ${formatBytes(state.downloaded)} / ${formatBytes(state.total)}",
+                            color = Color.LightGray,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+                is UpdateState.Downloaded -> {
+                    Text("即将拉起系统安装器", color = Color.LightGray)
+                }
+                is UpdateState.Error -> {
+                    Text(state.message, color = MaterialTheme.colorScheme.error)
+                }
+                else -> Unit
+            }
+        },
+        confirmButton = {
+            when (state) {
+                is UpdateState.Available -> TextButton(onClick = onDownload) {
+                    Text("立即更新", color = NeonGreen, fontWeight = FontWeight.Bold)
+                }
+                is UpdateState.Downloaded -> TextButton(onClick = onInstall) {
+                    Text("安装", color = NeonGreen, fontWeight = FontWeight.Bold)
+                }
+                is UpdateState.Error -> TextButton(onClick = onDownload) {
+                    Text("重试", color = NeonGreen, fontWeight = FontWeight.Bold)
+                }
+                else -> Unit
+            }
+        },
+        dismissButton = {
+            when (state) {
+                is UpdateState.Downloading -> TextButton(onClick = onCancelDownload) {
+                    Text("取消", color = Color.Gray)
+                }
+                is UpdateState.Available, is UpdateState.Error -> TextButton(onClick = onDismiss) {
+                    Text("稍后", color = Color.Gray)
+                }
+                else -> Unit
+            }
+        },
+        containerColor = DarkSurface
+    )
+}
+
+private fun formatBytes(b: Long): String = when {
+    b >= 1024L * 1024L -> "%.1f MB".format(b / 1024.0 / 1024.0)
+    b >= 1024L -> "%.1f KB".format(b / 1024.0)
+    else -> "$b B"
 }

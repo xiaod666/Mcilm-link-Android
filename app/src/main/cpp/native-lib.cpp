@@ -2,7 +2,9 @@
 #include <android/log.h>
 #include <dlfcn.h>
 #include <string>
+#include <vector>
 #include <cstring>
+#include <cstdint>
 
 #define TAG "MciLmBridge"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, TAG, __VA_ARGS__)
@@ -69,13 +71,99 @@ struct ScopedEnv {
     ~ScopedEnv() { if (attached && g_vm) g_vm->DetachCurrentThread(); }
 };
 
+/* ---------- UTF-8 <-> UTF-16 转换（绕开 JNI modified UTF-8 限制） ---------- */
+
+/* 标准 UTF-8 -> jstring（支持 4 字节 emoji；非法字节用 U+FFFD 替换） */
+static jstring utf8_to_jstring(JNIEnv* env, const char* s) {
+    if (!s) return env->NewString(nullptr, 0);
+    size_t n = strlen(s);
+    std::vector<jchar> buf;
+    buf.reserve(n);
+    size_t i = 0;
+    while (i < n) {
+        unsigned char c = (unsigned char)s[i];
+        uint32_t cp; int len;
+        if (c < 0x80)              { cp = c;         len = 1; }
+        else if ((c & 0xE0)==0xC0) { cp = c & 0x1F;  len = 2; }
+        else if ((c & 0xF0)==0xE0) { cp = c & 0x0F;  len = 3; }
+        else if ((c & 0xF8)==0xF0) { cp = c & 0x07;  len = 4; }
+        else { cp = 0xFFFD; len = 1; }
+        if (i + len > n) { cp = 0xFFFD; len = 1; }
+        else {
+            for (int k = 1; k < len; ++k) {
+                unsigned char cc = (unsigned char)s[i+k];
+                if ((cc & 0xC0) != 0x80) { cp = 0xFFFD; len = 1; break; }
+                cp = (cp << 6) | (cc & 0x3F);
+            }
+        }
+        i += len;
+        if (cp <= 0xFFFF) {
+            if (cp >= 0xD800 && cp <= 0xDFFF) cp = 0xFFFD;
+            buf.push_back((jchar)cp);
+        } else {
+            if (cp > 0x10FFFF) cp = 0xFFFD;
+            cp -= 0x10000;
+            buf.push_back((jchar)(0xD800 + (cp >> 10)));
+            buf.push_back((jchar)(0xDC00 + (cp & 0x3FF)));
+        }
+    }
+    jstring result = env->NewString(buf.data(), (jsize)buf.size());
+    SAFE_EXCEPTION_CHECK(env);
+    return result;
+}
+
+/* jstring -> 标准 UTF-8（UTF-16 代理对正确合成 4 字节；孤立代理项替换为 U+FFFD） */
+static std::string jstring_to_utf8(JNIEnv* env, jstring js) {
+    if (!js) return "";
+    jsize len = env->GetStringLength(js);
+    if (len <= 0) return "";
+    const jchar* chars = env->GetStringChars(js, nullptr);
+    if (!chars) { SAFE_EXCEPTION_CHECK(env); return ""; }
+    std::string out;
+    out.reserve((size_t)len * 3);
+    for (jsize i = 0; i < len; ++i) {
+        uint32_t cp = chars[i];
+        if (cp >= 0xD800 && cp <= 0xDBFF) {
+            if (i + 1 < len && chars[i+1] >= 0xDC00 && chars[i+1] <= 0xDFFF) {
+                cp = 0x10000 + ((cp - 0xD800) << 10) + (chars[i+1] - 0xDC00);
+                ++i;
+            } else {
+                cp = 0xFFFD;
+            }
+        } else if (cp >= 0xDC00 && cp <= 0xDFFF) {
+            cp = 0xFFFD;
+        }
+        if (cp < 0x80) {
+            out.push_back((char)cp);
+        } else if (cp < 0x800) {
+            out.push_back((char)(0xC0 | (cp >> 6)));
+            out.push_back((char)(0x80 | (cp & 0x3F)));
+        } else if (cp < 0x10000) {
+            out.push_back((char)(0xE0 | (cp >> 12)));
+            out.push_back((char)(0x80 | ((cp >> 6) & 0x3F)));
+            out.push_back((char)(0x80 | (cp & 0x3F)));
+        } else {
+            out.push_back((char)(0xF0 | (cp >> 18)));
+            out.push_back((char)(0x80 | ((cp >> 12) & 0x3F)));
+            out.push_back((char)(0x80 | ((cp >> 6) & 0x3F)));
+            out.push_back((char)(0x80 | (cp & 0x3F)));
+        }
+    }
+    env->ReleaseStringChars(js, chars);
+    return out;
+}
+
+/* ---------- 回调 ---------- */
+
 static void on_log_cb(const char* msg, void* /*user*/) {
     if (!g_native_class || !g_on_log_mid) return;
     ScopedEnv se;
     if (!se.env) return;
     if (se.env->PushLocalFrame(8) == 0) {
-        jstring jmsg = se.env->NewStringUTF(msg ? msg : "");
-        if (jmsg) se.env->CallStaticVoidMethod(g_native_class, g_on_log_mid, jmsg);
+        jstring jmsg = utf8_to_jstring(se.env, msg ? msg : "");
+        if (jmsg) {
+            se.env->CallStaticVoidMethod(g_native_class, g_on_log_mid, jmsg);
+        }
         SAFE_EXCEPTION_CHECK(se.env);
         se.env->PopLocalFrame(nullptr);
     }
@@ -86,9 +174,14 @@ static void on_event_cb(const char* kind, const char* json, void* /*user*/) {
     ScopedEnv se;
     if (!se.env) return;
     if (se.env->PushLocalFrame(8) == 0) {
-        jstring jk = se.env->NewStringUTF(kind ? kind : "");
-        jstring jj = se.env->NewStringUTF(json ? json : "");
-        if (jk && jj) se.env->CallStaticVoidMethod(g_native_class, g_on_event_mid, jk, jj);
+        jstring jk = utf8_to_jstring(se.env, kind ? kind : "");
+        jstring jj = utf8_to_jstring(se.env, json ? json : "");
+        if (jk && jj) {
+            se.env->CallStaticVoidMethod(g_native_class, g_on_event_mid, jk, jj);
+        } else {
+            /* 极少数 OOM 场景，丢日志但绝不崩溃 */
+            LOGE("on_event_cb: jstring allocation failed, kind=%s", kind ? kind : "");
+        }
         SAFE_EXCEPTION_CHECK(se.env);
         se.env->PopLocalFrame(nullptr);
     }
@@ -101,12 +194,13 @@ static int audio_read_cb(char* buf, int n, void* /*user*/) {
     if (!se.env) return -1;
     if (se.env->PushLocalFrame(4) != 0) return -1;
     jbyteArray arr = se.env->NewByteArray(n);
-    if (!arr) { se.env->PopLocalFrame(nullptr); return -1; }
+    if (!arr) { SAFE_EXCEPTION_CHECK(se.env); se.env->PopLocalFrame(nullptr); return -1; }
     jint read = se.env->CallStaticIntMethod(g_native_class, g_on_audio_read_mid, arr);
     SAFE_EXCEPTION_CHECK(se.env);
     if (read > 0) {
         if (read > n) read = n;
         se.env->GetByteArrayRegion(arr, 0, read, reinterpret_cast<jbyte*>(buf));
+        SAFE_EXCEPTION_CHECK(se.env);
     }
     se.env->PopLocalFrame(nullptr);
     return read;
@@ -119,13 +213,16 @@ static int audio_write_cb(char* buf, int n, void* /*user*/) {
     if (!se.env) return 0;
     if (se.env->PushLocalFrame(4) != 0) return 0;
     jbyteArray arr = se.env->NewByteArray(n);
-    if (!arr) { se.env->PopLocalFrame(nullptr); return 0; }
+    if (!arr) { SAFE_EXCEPTION_CHECK(se.env); se.env->PopLocalFrame(nullptr); return 0; }
     se.env->SetByteArrayRegion(arr, 0, n, reinterpret_cast<const jbyte*>(buf));
+    SAFE_EXCEPTION_CHECK(se.env);
     jint written = se.env->CallStaticIntMethod(g_native_class, g_on_audio_write_mid, arr, n);
     SAFE_EXCEPTION_CHECK(se.env);
     se.env->PopLocalFrame(nullptr);
     return written;
 }
+
+/* ---------- JNI 生命周期 ---------- */
 
 extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     g_vm = vm;
@@ -146,43 +243,42 @@ extern "C" JNIEXPORT void JNICALL JNI_OnUnload(JavaVM* /*vm*/, void* /*reserved*
     }
 }
 
+/* ---------- 导出函数 ---------- */
+
 extern "C" JNIEXPORT jint JNICALL
 Java_wasai_link_mcilm_top_link_MciLmNative_initLibrary(JNIEnv* env, jobject /* thiz */, jstring customPath) {
-    const char* path = env->GetStringUTFChars(customPath, nullptr);
-    if (!path) return -1; // 修复 P0-2
+    std::string path = jstring_to_utf8(env, customPath);
 
-    if (g_lib_handle) {
-        env->ReleaseStringUTFChars(customPath, path);
-        return 0;
-    }
+    if (g_lib_handle) return 0;
 
-    if (strlen(path) == 0) {
+    if (path.empty()) {
         g_lib_handle = dlopen("libmcilm_link.so", RTLD_NOW | RTLD_LOCAL);
     } else {
-        g_lib_handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+        g_lib_handle = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
     }
-    env->ReleaseStringUTFChars(customPath, path);
 
     if (!g_lib_handle) {
+        LOGE("dlopen failed: %s", dlerror());
         return -1;
     }
 
-    g_version = (fn_version) dlsym(g_lib_handle, "link_version");
-    g_running = (fn_running) dlsym(g_lib_handle, "link_running");
-    g_host_start = (fn_host_start) dlsym(g_lib_handle, "link_host_start");
-    g_client_start = (fn_client_start) dlsym(g_lib_handle, "link_client_start");
-    g_query = (fn_query) dlsym(g_lib_handle, "link_query");
-    g_command = (fn_command) dlsym(g_lib_handle, "link_command");
-    g_stop = (fn_stop) dlsym(g_lib_handle, "link_stop");
-    g_free_string = (fn_free_string) dlsym(g_lib_handle, "link_free_string");
-    g_set_log = (fn_set_log) dlsym(g_lib_handle, "link_set_log");
-    g_set_event = (fn_set_event) dlsym(g_lib_handle, "link_set_event");
-    g_set_discovery = (fn_set_discovery) dlsym(g_lib_handle, "link_set_discovery");
-    g_set_extra = (fn_set_extra) dlsym(g_lib_handle, "link_set_extra");
-    g_set_audio = (fn_set_audio) dlsym(g_lib_handle, "link_set_audio");
+    g_version        = (fn_version)        dlsym(g_lib_handle, "link_version");
+    g_running        = (fn_running)        dlsym(g_lib_handle, "link_running");
+    g_host_start     = (fn_host_start)     dlsym(g_lib_handle, "link_host_start");
+    g_client_start   = (fn_client_start)   dlsym(g_lib_handle, "link_client_start");
+    g_query          = (fn_query)          dlsym(g_lib_handle, "link_query");
+    g_command        = (fn_command)        dlsym(g_lib_handle, "link_command");
+    g_stop           = (fn_stop)           dlsym(g_lib_handle, "link_stop");
+    g_free_string    = (fn_free_string)    dlsym(g_lib_handle, "link_free_string");
+    g_set_log        = (fn_set_log)        dlsym(g_lib_handle, "link_set_log");
+    g_set_event      = (fn_set_event)      dlsym(g_lib_handle, "link_set_event");
+    g_set_discovery  = (fn_set_discovery)  dlsym(g_lib_handle, "link_set_discovery");
+    g_set_extra      = (fn_set_extra)      dlsym(g_lib_handle, "link_set_extra");
+    g_set_audio      = (fn_set_audio)      dlsym(g_lib_handle, "link_set_audio");
 
     if (!g_version || !g_host_start || !g_client_start || !g_query ||
         !g_command || !g_stop || !g_free_string || !g_set_log || !g_set_event || !g_set_discovery) {
+        LOGE("dlsym missing required symbol");
         dlclose(g_lib_handle);
         g_lib_handle = nullptr;
         return -1;
@@ -198,9 +294,9 @@ Java_wasai_link_mcilm_top_link_MciLmNative_initLibrary(JNIEnv* env, jobject /* t
         }
         g_native_class = (jclass) env->NewGlobalRef(local_cls);
         env->DeleteLocalRef(local_cls);
-        g_on_log_mid = env->GetStaticMethodID(g_native_class, "onNativeLog", "(Ljava/lang/String;)V");
-        g_on_event_mid = env->GetStaticMethodID(g_native_class, "onNativeEvent", "(Ljava/lang/String;Ljava/lang/String;)V");
-        g_on_audio_read_mid = env->GetStaticMethodID(g_native_class, "onAudioRead", "([B)I");
+        g_on_log_mid         = env->GetStaticMethodID(g_native_class, "onNativeLog", "(Ljava/lang/String;)V");
+        g_on_event_mid       = env->GetStaticMethodID(g_native_class, "onNativeEvent", "(Ljava/lang/String;Ljava/lang/String;)V");
+        g_on_audio_read_mid  = env->GetStaticMethodID(g_native_class, "onAudioRead", "([B)I");
         g_on_audio_write_mid = env->GetStaticMethodID(g_native_class, "onAudioWrite", "([BI)I");
         if (!g_on_log_mid || !g_on_event_mid) {
             SAFE_EXCEPTION_CHECK(env);
@@ -216,9 +312,9 @@ Java_wasai_link_mcilm_top_link_MciLmNative_initLibrary(JNIEnv* env, jobject /* t
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_wasai_link_mcilm_top_link_MciLmNative_linkVersion(JNIEnv* env, jobject /* thiz */) {
-    if (!g_version) return env->NewStringUTF("");
+    if (!g_version) return utf8_to_jstring(env, "");
     char* s = g_version();
-    jstring res = env->NewStringUTF(s ? s : "");
+    jstring res = utf8_to_jstring(env, s ? s : "");
     if (s && g_free_string) g_free_string(s);
     return res;
 }
@@ -248,10 +344,8 @@ Java_wasai_link_mcilm_top_link_MciLmNative_linkSetEvent(JNIEnv*, jobject /* thiz
 extern "C" JNIEXPORT void JNICALL
 Java_wasai_link_mcilm_top_link_MciLmNative_linkSetDiscovery(JNIEnv* env, jobject /* thiz */, jstring token, jint thresholdMs) {
     if (!g_set_discovery) return;
-    const char* c_token = env->GetStringUTFChars(token, nullptr);
-    if (!c_token) return;
-    g_set_discovery(c_token, thresholdMs);
-    env->ReleaseStringUTFChars(token, c_token);
+    std::string c_token = jstring_to_utf8(env, token);
+    g_set_discovery(c_token.c_str(), thresholdMs);
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -265,71 +359,52 @@ Java_wasai_link_mcilm_top_link_MciLmNative_linkSetAudio(JNIEnv*, jobject /* thiz
 extern "C" JNIEXPORT jint JNICALL
 Java_wasai_link_mcilm_top_link_MciLmNative_linkSetExtra(JNIEnv* env, jobject /* thiz */, jstring extras) {
     if (!g_set_extra) return -1;
-    const char* s = env->GetStringUTFChars(extras, nullptr);
-    if (!s) return -1;
-    int rc = g_set_extra(s);
-    env->ReleaseStringUTFChars(extras, s);
-    return rc;
+    std::string s = jstring_to_utf8(env, extras);
+    return g_set_extra(s.c_str());
 }
 
 extern "C" JNIEXPORT jint JNICALL
 Java_wasai_link_mcilm_top_link_MciLmNative_linkHostStart(JNIEnv* env, jobject /* thiz */, jstring server, jstring room, jstring key, jstring pass, jstring features, jstring ports, jstring sni, jint plain) {
     if (!g_host_start) return -1;
-    const char* s1 = env->GetStringUTFChars(server, nullptr); if (!s1) return -1;
-    const char* s2 = env->GetStringUTFChars(room, nullptr); if (!s2) { env->ReleaseStringUTFChars(server, s1); return -1; }
-    const char* s3 = env->GetStringUTFChars(key, nullptr); if (!s3) { env->ReleaseStringUTFChars(server, s1); env->ReleaseStringUTFChars(room, s2); return -1; }
-    const char* s4 = env->GetStringUTFChars(pass, nullptr); if (!s4) { env->ReleaseStringUTFChars(server, s1); env->ReleaseStringUTFChars(room, s2); env->ReleaseStringUTFChars(key, s3); return -1; }
-    const char* s5 = env->GetStringUTFChars(features, nullptr); if (!s5) { env->ReleaseStringUTFChars(server, s1); env->ReleaseStringUTFChars(room, s2); env->ReleaseStringUTFChars(key, s3); env->ReleaseStringUTFChars(pass, s4); return -1; }
-    const char* s6 = env->GetStringUTFChars(ports, nullptr); if (!s6) { env->ReleaseStringUTFChars(server, s1); env->ReleaseStringUTFChars(room, s2); env->ReleaseStringUTFChars(key, s3); env->ReleaseStringUTFChars(pass, s4); env->ReleaseStringUTFChars(features, s5); return -1; }
-    const char* s7 = env->GetStringUTFChars(sni, nullptr); if (!s7) { env->ReleaseStringUTFChars(server, s1); env->ReleaseStringUTFChars(room, s2); env->ReleaseStringUTFChars(key, s3); env->ReleaseStringUTFChars(pass, s4); env->ReleaseStringUTFChars(features, s5); env->ReleaseStringUTFChars(ports, s6); return -1; }
-
-    int ret = g_host_start(s1, s2, s3, s4, s5, s6, s7, plain);
-
-    env->ReleaseStringUTFChars(server, s1); env->ReleaseStringUTFChars(room, s2);
-    env->ReleaseStringUTFChars(key, s3); env->ReleaseStringUTFChars(pass, s4);
-    env->ReleaseStringUTFChars(features, s5); env->ReleaseStringUTFChars(ports, s6);
-    env->ReleaseStringUTFChars(sni, s7);
-    return ret;
+    std::string s1 = jstring_to_utf8(env, server);
+    std::string s2 = jstring_to_utf8(env, room);
+    std::string s3 = jstring_to_utf8(env, key);
+    std::string s4 = jstring_to_utf8(env, pass);
+    std::string s5 = jstring_to_utf8(env, features);
+    std::string s6 = jstring_to_utf8(env, ports);
+    std::string s7 = jstring_to_utf8(env, sni);
+    return g_host_start(s1.c_str(), s2.c_str(), s3.c_str(), s4.c_str(), s5.c_str(), s6.c_str(), s7.c_str(), plain);
 }
 
 extern "C" JNIEXPORT jint JNICALL
 Java_wasai_link_mcilm_top_link_MciLmNative_linkClientStart(JNIEnv* env, jobject /* thiz */, jstring server, jstring room, jstring key, jstring pass, jstring ports, jstring sni, jboolean plain, jboolean forceRelay, jboolean preferPeers) {
     if (!g_client_start) return -1;
-    const char* s1 = env->GetStringUTFChars(server, nullptr); if (!s1) return -1;
-    const char* s2 = env->GetStringUTFChars(room, nullptr); if (!s2) { env->ReleaseStringUTFChars(server, s1); return -1; }
-    const char* s3 = env->GetStringUTFChars(key, nullptr); if (!s3) { env->ReleaseStringUTFChars(server, s1); env->ReleaseStringUTFChars(room, s2); return -1; }
-    const char* s4 = env->GetStringUTFChars(pass, nullptr); if (!s4) { env->ReleaseStringUTFChars(server, s1); env->ReleaseStringUTFChars(room, s2); env->ReleaseStringUTFChars(key, s3); return -1; }
-    const char* s5 = env->GetStringUTFChars(ports, nullptr); if (!s5) { env->ReleaseStringUTFChars(server, s1); env->ReleaseStringUTFChars(room, s2); env->ReleaseStringUTFChars(key, s3); env->ReleaseStringUTFChars(pass, s4); return -1; }
-    const char* s6 = env->GetStringUTFChars(sni, nullptr); if (!s6) { env->ReleaseStringUTFChars(server, s1); env->ReleaseStringUTFChars(room, s2); env->ReleaseStringUTFChars(key, s3); env->ReleaseStringUTFChars(pass, s4); env->ReleaseStringUTFChars(ports, s5); return -1; }
-
-    int ret = g_client_start(s1, s2, s3, s4, s5, s6, plain ? 1 : 0, forceRelay ? 1 : 0, preferPeers ? 1 : 0);
-
-    env->ReleaseStringUTFChars(server, s1); env->ReleaseStringUTFChars(room, s2);
-    env->ReleaseStringUTFChars(key, s3); env->ReleaseStringUTFChars(pass, s4);
-    env->ReleaseStringUTFChars(ports, s5); env->ReleaseStringUTFChars(sni, s6);
-    return ret;
+    std::string s1 = jstring_to_utf8(env, server);
+    std::string s2 = jstring_to_utf8(env, room);
+    std::string s3 = jstring_to_utf8(env, key);
+    std::string s4 = jstring_to_utf8(env, pass);
+    std::string s5 = jstring_to_utf8(env, ports);
+    std::string s6 = jstring_to_utf8(env, sni);
+    return g_client_start(s1.c_str(), s2.c_str(), s3.c_str(), s4.c_str(), s5.c_str(), s6.c_str(),
+                          plain ? 1 : 0, forceRelay ? 1 : 0, preferPeers ? 1 : 0);
 }
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_wasai_link_mcilm_top_link_MciLmNative_linkQuery(JNIEnv* env, jobject /* thiz */, jstring what) {
-    if (!g_query) return env->NewStringUTF("");
-    const char* s = env->GetStringUTFChars(what, nullptr);
-    if (!s) return env->NewStringUTF("");
-    char* res = g_query(s);
-    env->ReleaseStringUTFChars(what, s);
-    jstring result = env->NewStringUTF(res ? res : "");
+    if (!g_query) return utf8_to_jstring(env, "");
+    std::string s = jstring_to_utf8(env, what);
+    char* res = g_query(s.c_str());
+    jstring result = utf8_to_jstring(env, res ? res : "");
     if (res && g_free_string) g_free_string(res);
     return result;
 }
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_wasai_link_mcilm_top_link_MciLmNative_linkCommand(JNIEnv* env, jobject /* thiz */, jstring line) {
-    if (!g_command) return env->NewStringUTF("");
-    const char* s = env->GetStringUTFChars(line, nullptr);
-    if (!s) return env->NewStringUTF("");
-    char* res = g_command(s);
-    env->ReleaseStringUTFChars(line, s);
-    jstring result = env->NewStringUTF(res ? res : "");
+    if (!g_command) return utf8_to_jstring(env, "");
+    std::string s = jstring_to_utf8(env, line);
+    char* res = g_command(s.c_str());
+    jstring result = utf8_to_jstring(env, res ? res : "");
     if (res && g_free_string) g_free_string(res);
     return result;
 }

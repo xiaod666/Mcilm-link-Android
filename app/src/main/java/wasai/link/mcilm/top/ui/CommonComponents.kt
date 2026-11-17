@@ -3,10 +3,14 @@ package wasai.link.mcilm.top.ui
 import android.content.Intent
 import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -21,6 +25,7 @@ import androidx.core.content.FileProvider
 import kotlinx.coroutines.launch
 import wasai.link.mcilm.top.data.LogFileManager
 import wasai.link.mcilm.top.link.MciLmNative
+import wasai.link.mcilm.top.ui.theme.NeonGreen
 import java.io.File
 
 // ==================== [HomeScreen 需要调用的方法] ====================
@@ -36,7 +41,7 @@ fun formatPlayTime(seconds: Long): String {
     return parts.joinToString(" ")
 }
 
-// ==================== [HomeScreen 需要调用的弹窗] ====================
+// ==================== 日志查看器 ====================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun McilmLogSheetContent() {
@@ -45,10 +50,15 @@ fun McilmLogSheetContent() {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
-    val isAtBottom by remember {
-        derivedStateOf {
-            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()
-            lastVisible == null || lastVisible.index >= logs.size - 2
+    var autoScroll by remember { mutableStateOf(true) }
+    var selectedTab by remember { mutableIntStateOf(0) } // 0=全部, 1=App, 2=内核, 3=报错
+
+    val filteredLogs = remember(logs.size, selectedTab) {
+        when (selectedTab) {
+            1 -> logs.filter { it.contains("[App]") }
+            2 -> logs.filter { it.contains("[Core]") }
+            3 -> logs.filter { it.contains("ERROR", true) || it.contains("失败") || it.contains("Exception") || it.contains("[Error]") }
+            else -> logs.toList()
         }
     }
 
@@ -58,39 +68,33 @@ fun McilmLogSheetContent() {
         logs.addAll(MciLmNative.coreLogHistory)
         logs.sort()
 
-        if (logs.isNotEmpty()) {
-            listState.scrollToItem(logs.size - 1)
-        }
+        if (logs.isNotEmpty()) listState.scrollToItem(filteredLogs.size - 1)
 
         launch {
             MciLmNative.appLogs.collect { msg ->
-                if (logs.size > 500) logs.removeAt(0)
+                if (logs.size > 1000) logs.removeAt(0)
                 logs.add(msg)
-                if (isAtBottom) listState.scrollToItem(logs.size - 1)
             }
         }
         launch {
             MciLmNative.logs.collect { msg ->
-                if (logs.size > 500) logs.removeAt(0)
+                if (logs.size > 1000) logs.removeAt(0)
                 logs.add(msg)
-                if (isAtBottom) listState.scrollToItem(logs.size - 1)
             }
         }
     }
 
-    // 封装分享文件的逻辑
+    LaunchedEffect(filteredLogs.size, autoScroll) {
+        if (autoScroll && filteredLogs.isNotEmpty()) {
+            listState.animateScrollToItem(filteredLogs.size - 1)
+        }
+    }
+
     val shareFile = { file: File?, titlePrefix: String ->
         if (file != null && file.exists()) {
             try {
-                if (file.length() == 0L) {
-                    LogFileManager.write("--- 用户手动导出了日志 ---")
-                }
-
-                val uri = FileProvider.getUriForFile(
-                    context,
-                    "${context.packageName}.fileprovider",
-                    file
-                )
+                if (file.length() == 0L) LogFileManager.write("--- 用户手动导出了日志 ---")
+                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
                 val intent = Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
                     putExtra(Intent.EXTRA_STREAM, uri)
@@ -102,57 +106,108 @@ fun McilmLogSheetContent() {
                 Toast.makeText(context, "分享失败: ${t.message}", Toast.LENGTH_SHORT).show()
             }
         } else {
-            Toast.makeText(context, "日志文件尚未生成或不存在", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "日志文件尚未生成或为空", Toast.LENGTH_SHORT).show()
         }
     }
 
-    Column(
-        modifier = Modifier.fillMaxWidth().height(500.dp).background(Color(0xFF121212))
-    ) {
+    Column(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.85f).background(Color(0xFF121212))) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("运行日志 (历史+实时)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
-
+            Text("运行日志", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
             Row {
-                TextButton(onClick = {
-                    shareFile(LogFileManager.getLogFile(), "本次运行日志")
-                }) { Text("分享本次") }
-
-                TextButton(onClick = {
-                    shareFile(LogFileManager.getDebugFile(), "Debug报错日志")
-                }) { Text("分享Debug", color = Color(0xFFFF5252)) }
-
+                IconButton(onClick = { autoScroll = !autoScroll }) {
+                    Icon(
+                        if (autoScroll) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (autoScroll) "暂停滚动" else "恢复滚动",
+                        tint = if (autoScroll) Color.Gray else NeonGreen
+                    )
+                }
+                TextButton(onClick = { shareFile(LogFileManager.getLogFile(), "本次运行日志") }) { Text("分享本次", fontSize = 13.sp) }
+                TextButton(onClick = { shareFile(LogFileManager.getDebugFile(), "Debug日志") }) { Text("分享Debug", color = Color(0xFFFF5252), fontSize = 13.sp) }
                 TextButton(onClick = {
                     logs.clear()
                     MciLmNative.appLogHistory.clear()
                     MciLmNative.coreLogHistory.clear()
-                }) { Text("清空") }
+                }) { Text("清空", color = Color.Gray, fontSize = 13.sp) }
             }
         }
-        HorizontalDivider(color = Color.DarkGray)
 
-        if (logs.isEmpty()) {
+        TabRow(
+            selectedTabIndex = selectedTab,
+            containerColor = Color(0xFF1E1E1E),
+            contentColor = NeonGreen,
+            divider = { HorizontalDivider(color = Color.DarkGray) }
+        ) {
+            Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text("全部") })
+            Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text("应用") })
+            Tab(selected = selectedTab == 2, onClick = { selectedTab = 2 }, text = { Text("内核") })
+            Tab(selected = selectedTab == 3, onClick = { selectedTab = 3 }, text = { Text("报错", color = if (selectedTab == 3) NeonGreen else Color(0xFFFF5252)) })
+        }
+
+        if (filteredLogs.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("暂无日志\n尝试登录或创建/加入房间后查看", color = Color.Gray, style = MaterialTheme.typography.bodyMedium)
+                Text("暂无相关日志", color = Color.Gray)
             }
         } else {
             LazyColumn(
                 state = listState,
-                modifier = Modifier.fillMaxSize().padding(16.dp),
+                modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                items(logs) { log ->
-                    val color = when {
+                items(filteredLogs) { log ->
+                    val isError = log.contains("ERROR", true) || log.contains("Exception", true) || log.contains("[Error]", true)
+                    val isWarn = log.contains("WARN", true)
+
+                    val textColor = when {
+                        isError -> Color(0xFFFF5252)
+                        isWarn -> Color(0xFFFFD740)
                         log.contains("[App]") -> Color(0xFF00E5FF)
-                        log.contains("ERROR") || log.contains("error") || log.contains("CRITICAL") -> Color(0xFFFF5252)
-                        else -> Color(0xFFA0A0A0)
+                        log.contains("[Core]") -> Color(0xFFA0A0A0)
+                        else -> Color.LightGray
                     }
-                    Text(log, fontFamily = FontFamily.Monospace, fontSize = 12.sp, color = color)
+
+                    Text(
+                        text = log,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                        color = textColor,
+                        lineHeight = 16.sp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(if (isError) Modifier.background(Color(0x22FF5252), androidx.compose.foundation.shape.RoundedCornerShape(4.dp)).padding(4.dp) else Modifier)
+                    )
                 }
             }
         }
+    }
+}
+
+// ==================== 全局开源声明组件 ====================
+@Composable
+fun OpenSourceLink(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    Row(
+        modifier = modifier.fillMaxWidth().padding(vertical = 24.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text("本项目已在 github 上开源 ", color = Color.Gray, fontSize = 12.sp)
+        Text(
+            "打开",
+            color = NeonGreen,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.clickable {
+                try {
+                    val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://github.com/xiaod666/Mcilm-link-Android"))
+                    context.startActivity(intent)
+                } catch (_: Exception) {
+                    Toast.makeText(context, "未安装浏览器，无法打开链接", Toast.LENGTH_SHORT).show()
+                }
+            }
+        )
     }
 }
