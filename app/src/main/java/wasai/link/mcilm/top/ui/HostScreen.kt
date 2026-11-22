@@ -243,8 +243,18 @@ fun HostScreen(vm: MainViewModel, onBack: () -> Unit) {
         if (enableChat) append(",chat=$chatMode")
     }
 
-    val hostCanSendFile = enableFileSync && (fileSyncMode == "push" || fileSyncMode == "both")
-    val fileDisabledMsg = if (enableFileSync) "当前配置为仅接收文件，不可发送" else "未开启文件同步"
+    // 【修复】访客进房后不能用"开房表单"里的本地开关判断文件能力（访客这两个值恒为 false），
+    // 否则即使房间开了 file=push/both 也发不出文件。访客侧以底层探测结果为准。
+    val canSendFile = if (state.isHosting) {
+        enableFileSync && (fileSyncMode == "push" || fileSyncMode == "both")
+    } else {
+        state.isFileSyncSupported
+    }
+    val fileDisabledMsg = when {
+        !state.isHosting && !state.isFileSyncSupported -> "当前房间未开启文件同步"
+        enableFileSync -> "当前配置为仅接收文件，不可发送"
+        else -> "未开启文件同步"
+    }
 
     var sniInput by rememberSaveable { mutableStateOf("") }
     var plainWss by rememberSaveable { mutableStateOf(false) }
@@ -413,8 +423,8 @@ fun HostScreen(vm: MainViewModel, onBack: () -> Unit) {
                     Spacer(Modifier.height(8.dp))
                     ChatInputBar(
                         onSend = { vm.sendChatMessage(it) },
-                        onAttachFile = { if (hostCanSendFile) filePickerLauncher.launch("*/*") },
-                        isFileSyncEnabled = hostCanSendFile,
+                        onAttachFile = { if (canSendFile) filePickerLauncher.launch("*/*") },
+                        isFileSyncEnabled = canSendFile,
                         disabledToastText = fileDisabledMsg
                     )
                     Spacer(Modifier.height(8.dp))
@@ -667,7 +677,8 @@ fun HostScreen(vm: MainViewModel, onBack: () -> Unit) {
                                 Text(member.peerId, color = Color.White)
                                 Text(if (member.role == "host") "房主" else "访客", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
                             }
-                            if (member.role != "host") {
+                            // 【修复】踢人只对房主开放，访客看到这个按钮只会发出 host-only 命令
+                            if (state.isHosting && member.role != "host") {
                                 TextButton(onClick = { vm.kickMember(member.peerId); showMemberDialog = false }) {
                                     Text("踢出", color = MaterialTheme.colorScheme.error)
                                 }

@@ -3,6 +3,7 @@ package wasai.link.mcilm.top.viewmodel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import wasai.link.mcilm.top.data.AudioEngine
@@ -21,6 +22,9 @@ internal fun MainViewModel.startHost(
 ) {
     if (isClickTooFast()) return
     if (_uiState.value.isLoading) return
+    // 上一次开房协程还在跑（例如用户刚点了"取消操作"但底层 JNI 尚未返回）时直接拒绝，
+    // 否则会并发起第二次 linkHostStart。
+    if (roomOpJob?.isActive == true) return
     if (ports.isNotBlank()) {
         val p = ports.split(",").firstOrNull()?.trim()?.toIntOrNull()
         if (p == null || p !in 1024..65535) {
@@ -47,7 +51,7 @@ internal fun MainViewModel.startHost(
         roomId = null, isHosting = false
     )
 
-    viewModelScope.launch(Dispatchers.IO) {
+    roomOpJob = viewModelScope.launch(Dispatchers.IO) {
         if (isPublic) {
             val sponsorRes = repo.getSponsor().getOrNull()
             if (sponsorRes?.canPublicRoom != true) {
@@ -87,6 +91,12 @@ internal fun MainViewModel.startHost(
                 server, roomMeta, "", finalPass, effectiveFeatures, ports, sni,
                 if (plain) 1 else 0
             )
+            // 用户可能在 JNI 阻塞期间点了「取消操作」：此时协程已被取消，
+            // 但底层房间可能刚刚建出来，必须立刻收掉，避免界面上看不见的幽灵房间。
+            if (!isActive) {
+                MciLmNative.linkStop()
+                return@launch
+            }
             if (rc != 0) {
                 if (AudioEngine.isRunning()) { MciLmNative.linkSetAudio(false); AudioEngine.stop() }
                 _uiState.value = _uiState.value.copy(isVoiceActive = false)
@@ -137,6 +147,8 @@ internal fun MainViewModel.startClient(
 ) {
     if (isClickTooFast()) return
     if (_uiState.value.isLoading) return
+    // 与 startHost 同理：上一轮加房协程仍在进行时拒绝重入，避免并发 linkClientStart
+    if (roomOpJob?.isActive == true) return
     if (ports.isNotBlank()) {
         val p = ports.split(",").firstOrNull()?.trim()?.toIntOrNull()
         if (p == null || p !in 1024..65535) {
@@ -155,7 +167,7 @@ internal fun MainViewModel.startClient(
         roomId = null
     )
 
-    viewModelScope.launch(Dispatchers.IO) {
+    roomOpJob = viewModelScope.launch(Dispatchers.IO) {
         val recentLogs = mutableListOf<String>()
         val logJob = launch {
             MciLmNative.logs.collect {
@@ -168,6 +180,11 @@ internal fun MainViewModel.startClient(
                 MciLmNative.linkSetDiscovery(token, _uiState.value.discoveryThreshold)
             }
             val rc = MciLmNative.linkClientStart(server, roomId, "", pass, ports, sni, plain, forceRelay, preferPeers)
+            // 同上：取消操作后底层可能已连上，立即收掉避免幽灵会话
+            if (!isActive) {
+                MciLmNative.linkStop()
+                return@launch
+            }
             if (rc != 0) {
                 delay(300.milliseconds)
                 val cleanError = extractErrorLog(recentLogs)

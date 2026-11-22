@@ -146,6 +146,9 @@ class TokenManager(context: Context) {
         }
     }
 
+    // 【加固】读取路径会做过期清理并回写加密存储，必须与其它写方法用同一把锁，
+    // 否则一旦调用方从 IO 线程读取，就可能用旧列表覆盖掉并发的 save/remove。
+    @Synchronized
     fun getRememberedAccounts(): List<RememberedAccount> {
         return readRememberedAccountsOrNull() ?: emptyList()
     }

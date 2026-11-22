@@ -65,7 +65,9 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
     val snackbarHostState = remember { SnackbarHostState() }
     val navController = rememberNavController()
 
-    var isLibReady by remember { mutableStateOf(false) }
+    // 内核就绪状态放在 ViewModel 里判断：Activity 重建（旋转/深色模式切换）时不必再走一遍
+    // 动态库下载校验与联网检查，也就不会闪一下启动 Gate。
+    var isLibReady by remember { mutableStateOf(vm.libraryReady) }
     var fatalError by remember { mutableStateOf<String?>(null) }
 
     // 全局保活弹窗控制
@@ -113,6 +115,11 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
     }
 
     LaunchedEffect(Unit) {
+        // 旋转等重建场景：ViewModel 里已标记内核就绪，直接放行，避免重复 initialize
+        if (vm.libraryReady) {
+            isLibReady = true
+            return@LaunchedEffect
+        }
         withContext(Dispatchers.IO) {
             MciLmNative.initFileLogging(context)
             val result = MciLmNative.initialize(context)
@@ -162,9 +169,12 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
     // 【修复】访客加入成功后自动进入房间界面。
     // 此前 "room" 路由虽然注册了 HostScreen，但全工程没有任何 navigate 调用，
     // 导致访客加房成功后仍停留在 JoinScreen，聊天 / 文件 / 成员 / 停止房间全部不可达。
-    LaunchedEffect(currentRoute, state.roomId, state.isJoining, state.isHosting) {
+    LaunchedEffect(currentRoute, state.roomId, state.isJoining, state.isHosting, state.authState) {
         val route = currentRoute
-        if (route == null || route == "room" || route == "host") return@LaunchedEffect
+        // 只在"已登录 且 从首页/加入页发起"时跳转：
+        // 否则会话中途 token 失效跳到 login 后，会被这条逻辑重新拉回房间（栈变成 login→room）。
+        if (state.authState != AuthState.Authenticated) return@LaunchedEffect
+        if (route != "home" && route != "join") return@LaunchedEffect
         if (state.roomId == null || state.isHosting || !state.isJoining) return@LaunchedEffect
         navController.navigate("room") {
             launchSingleTop = true

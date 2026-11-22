@@ -30,8 +30,8 @@ android {
         applicationId = "wasai.link.mcilm.top"
         minSdk = 24
         targetSdk = 34
-        versionCode = 18
-        versionName = "1.6.4"
+        versionCode = 19
+        versionName = "1.6.5-beta"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

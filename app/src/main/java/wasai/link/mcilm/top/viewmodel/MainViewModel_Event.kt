@@ -13,7 +13,12 @@ import java.util.Locale
 // ===== 事件分发模块 =====
 
 internal fun MainViewModel.observeEvents() {
-    viewModelScope.launch {
+    // 【修复】Activity 重建（横竖屏旋转、深色模式切换等）会让 AppRoot 的
+    // LaunchedEffect(Unit) 重新执行并再次调用本函数；之前没有守卫，
+    // 每重建一次就多挂一个 events 收集器 —— 聊天消息、房间/文件事件都会被重复处理 N 次
+    //（表现为重复气泡、重复弹窗、重复 bindRoom / linkStop）。
+    if (eventsJob?.isActive == true) return
+    eventsJob = viewModelScope.launch {
         MciLmNative.events.collect { event ->
             when (event) {
                 is MciLmNative.Event.Room -> {

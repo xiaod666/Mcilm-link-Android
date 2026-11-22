@@ -152,6 +152,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     internal var lastJoinParams: ClientParams? = null
     internal var patrolJob: Job? = null
     internal var fileTasksJob: Job? = null
+    internal var eventsJob: Job? = null
+    /** 开房 / 加房 的进行中协程：用于防止取消 Loading 后再点一次造成并发启动 */
+    internal var roomOpJob: Job? = null
+    /** 内核是否已就绪（Activity 重建时不必重新下载校验动态库） */
+    internal var libraryReady = false
     internal var reconnectJob: Job? = null
     internal var nodeNamesMap: Map<String, String> = emptyMap()
 
@@ -226,6 +231,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun onLibraryReady() {
+        libraryReady = true
         MciLmNative.linkSetLog(_uiState.value.isDevMode)
         MciLmNative.linkSetEvent(true)
         observeEvents()
@@ -250,6 +256,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     tokenManager.invalidateAllPasswords()
                     MciLmNative.logApp("安全警告：无法定位当前账号，已强制清除所有本地免密凭据")
                 }
+
+                // 【修复】凭证在联机过程中失效时，必须把房间会话一并收掉：
+                // 否则 roomId / isJoining 残留，界面会被导航逻辑重新拉回房间，
+                // 而底层 linkStop 从未被调用，留下"幽灵房间"。
+                stopSession()
 
                 _uiState.value = _uiState.value.copy(
                     authState = AuthState.Unauthenticated,
@@ -284,7 +295,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun cancelLoading() {
         if (!_uiState.value.isLoading) return
-        MciLmNative.logApp("用户手动关闭了全局 Loading 弹窗（loadingMsg=${_uiState.value.loadingMsg}）")
+        val wasRoomOp = roomOpJob?.isActive == true
+        MciLmNative.logApp("用户手动关闭了全局 Loading 弹窗（loadingMsg=${_uiState.value.loadingMsg}，房间操作=$wasRoomOp）")
+
+        // 【修复】取消按钮之前只清 UI 状态：底层协程仍在跑，用户再点一次开房/加房就会并发起两次
+        // linkHostStart / linkClientStart。现在连进行操作一并取消，并收掉可能已经建出来的房间。
+        roomOpJob?.cancel()
+        roomOpJob = null
+        if (wasRoomOp) stopSession()
+
         _uiState.value = _uiState.value.copy(isLoading = false, loadingMsg = "")
     }
 

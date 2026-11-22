@@ -110,6 +110,11 @@ internal fun MainViewModel.startDownloadUpdate() {
             _uiEvent.tryEmit(UiEvent.ShowSnackbar("下载失败: ${e.message}", isLong = true))
         }
     }
+
+    // 【修复】downloadJob 被取消（用户取消 / ViewModel 销毁）时，阻塞中的
+    // http.newCall().execute() 不会自动中断；在 job 结束时兜底取消当前 Call，
+    // 避免后台线程继续把整包 APK 下完。
+    downloadJob?.invokeOnCompletion { updateManager.cancelInFlight() }
 }
 
 internal fun MainViewModel.cancelDownloadUpdate() {

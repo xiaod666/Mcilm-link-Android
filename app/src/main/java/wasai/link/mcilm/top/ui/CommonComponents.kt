@@ -58,18 +58,19 @@ fun McilmLogSheetContent() {
     // 因此自动滚动必须依赖这个单调递增的版本号，而不是 size。
     var logRevision by remember { mutableIntStateOf(0) }
 
-    // 【修复】不再用 remember(logs.size, selectedTab) 缓存过滤结果。
-    // 日志到 1000 条上限后是"先 removeAt(0) 再 add"，size 恒定不变，
-    // 旧写法导致 remember 的 key 不再变化，界面从此卡在旧列表上。
-    // logs 是 SnapshotStateList，直接在组合期过滤即可自然响应增删。
-    val filteredLogs = when (selectedTab) {
-        1 -> logs.filter { it.contains("[App]") }
-        2 -> logs.filter { it.contains("[Core]") }
-        3 -> logs.filter {
-            it.contains("ERROR", true) || it.contains("失败") ||
-                it.contains("Exception", true) || it.contains("[Error]", true)
+    // 【修复】不再用 remember(logs.size) 缓存过滤结果：满 1000 条后是"删一条加一条"，
+    // size 恒定会让 key 永不变化、界面卡死。改用单调递增的 logRevision 作为 key，
+    // 既能在每条新日志到达时重算，又避免无关重组（切 Tab、暂停滚动等）重复过滤 1000 条。
+    val filteredLogs = remember(logRevision, selectedTab) {
+        when (selectedTab) {
+            1 -> logs.filter { it.contains("[App]") }
+            2 -> logs.filter { it.contains("[Core]") }
+            3 -> logs.filter {
+                it.contains("ERROR", true) || it.contains("失败") ||
+                    it.contains("Exception", true) || it.contains("[Error]", true)
+            }
+            else -> logs.toList()
         }
-        else -> logs.toList()
     }
 
     LaunchedEffect(Unit) {
@@ -145,6 +146,8 @@ fun McilmLogSheetContent() {
                     logs.clear()
                     MciLmNative.appLogHistory.clear()
                     MciLmNative.coreLogHistory.clear()
+                    // 过滤结果缓存在 logRevision 上，清空后必须递增才会立即生效
+                    logRevision++
                 }) { Text("清空", color = Color.Gray, fontSize = 13.sp) }
             }
         }

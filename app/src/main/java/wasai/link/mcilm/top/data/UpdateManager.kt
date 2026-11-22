@@ -10,6 +10,7 @@ import android.provider.Settings
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import okhttp3.Call
@@ -302,25 +303,29 @@ class UpdateManager(context: Context) {
             // ---------- 缓存判定 ----------
             if (apkFile.exists()) {
                 val cachedLen = apkFile.length()
-                val sizeMatches = info.apkSize <= 0L || cachedLen == info.apkSize
-                if (sizeMatches && verifySignature(apkFile)) {
+                val sizeKnown = info.apkSize > 0L
+                if (sizeKnown && cachedLen > info.apkSize) {
+                    // 比预期还大：串包或损坏，必须重下
+                    apkFile.delete()
+                } else if (sizeKnown && cachedLen == info.apkSize) {
+                    if (verifySignature(apkFile)) {
+                        MciLmNative.logApp("[Update] 命中本地缓存 ${apkFile.name}")
+                        return@withContext Result.success(apkFile)
+                    }
+                    // 大小吻合但签名不对，没有保留价值
+                    apkFile.delete()
+                } else if (!sizeKnown && verifySignature(apkFile)) {
+                    // 服务端没给 size（Gitee 资产常见）：只能靠签名判断是否已经下载完整
                     MciLmNative.logApp("[Update] 命中本地缓存 ${apkFile.name}")
                     return@withContext Result.success(apkFile)
                 }
-                if (info.apkSize > 0L && cachedLen > info.apkSize) {
-                    // 比预期还大：串包或损坏，必须重下
-                    apkFile.delete()
-                } else if (sizeMatches) {
-                    // 大小吻合但签名不对，同样没有保留价值
-                    apkFile.delete()
-                }
-                // 其余情况（大小不足）：保留不完整文件，下面走 Range 续传
+                // 其余情况（大小不足）：保留残缺文件，下面按已有字节发 Range 续传
             }
 
             // ---------- 断点续传下载 ----------
-            // 【修复】旧实现里"缓存未命中就 delete()"，导致后面的 Range 分支永远不可达。
-            // 现在保留残缺文件，真正按 Content-Length / Range 续传，失败也能下次接着下。
-            var startOffset = if (apkFile.exists() && info.apkSize > 0L) apkFile.length() else 0L
+            // 【修复】旧实现"缓存未命中就 delete()"，导致后面的 Range 分支永远不可达；
+            // 另外 apkSize 未知（Gitee 常缺 size）时也不会续传，现在统一按本地已有长度续。
+            var startOffset = if (apkFile.exists()) apkFile.length() else 0L
             if (startOffset > 0L) {
                 MciLmNative.logApp("[Update] 发现未完成的安装包 ${apkFile.length()}B，尝试断点续传")
             }
@@ -328,6 +333,9 @@ class UpdateManager(context: Context) {
             var finished = false
 
             while (!finished) {
+                // 用户取消 / VM 销毁后不要继续发下一个请求
+                ensureActive()
+
                 val reqBuilder = Request.Builder().url(info.downloadUrl)
                 if (startOffset > 0L) {
                     reqBuilder.header("Range", "bytes=$startOffset-")
@@ -368,8 +376,16 @@ class UpdateManager(context: Context) {
 
                         val total = when {
                             info.apkSize > 0L -> info.apkSize
-                            contentLen > 0L -> contentLen + resumeFrom
-                            else -> 0L
+                            else -> {
+                                // apkSize 未知时优先用 206 响应里的 Content-Range 总长度，
+                                // 否则进度条会一直停在 0%
+                                val rangeTotal = parseContentRangeTotal(resp.header("Content-Range"))
+                                when {
+                                    rangeTotal > 0L -> rangeTotal
+                                    contentLen > 0L -> contentLen + resumeFrom
+                                    else -> 0L
+                                }
+                            }
                         }
 
                         FileOutputStream(apkFile, isResume).use { output ->
@@ -436,6 +452,16 @@ class UpdateManager(context: Context) {
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    /**
+     * 解析 `Content-Range: bytes 0-99/12345` 里的总长度。
+     * 仅在 Release 未提供资产大小（Gitee）时用于计算下载进度；解析失败返回 -1。
+     */
+    private fun parseContentRangeTotal(header: String?): Long {
+        if (header.isNullOrBlank()) return -1L
+        val totalPart = header.substringAfterLast('/', "").trim()
+        return totalPart.toLongOrNull() ?: -1L
     }
 
     /** 取消正在执行的 HTTP Call。 */

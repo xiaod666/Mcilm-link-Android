@@ -56,7 +56,6 @@ fun HomeScreen(
 
     var selectedRoomToJoin by remember { mutableStateOf<PublicRoom?>(null) }
     var showLogSheet by remember { mutableStateOf(false) }
-    var pendingQuickJoin by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         vm.fetchPublicRooms()
@@ -64,14 +63,11 @@ fun HomeScreen(
         vm.fetchActivities()
     }
 
-    // 【修复】快捷加入：若 startClient 已经把 roomId 写好（同一帧一起更新），
-    // 就不要再跳 JoinScreen，直接由 AppRoot 进入房间界面，避免"房间→加入页"的错序导航。
-    LaunchedEffect(state.isJoining, state.roomId) {
-        if (state.isJoining && pendingQuickJoin) {
-            pendingQuickJoin = false
-            if (state.roomId == null) onNavigateJoin()
-        }
-    }
+    // 【修复】公开房"快速加入"不再跳一次加入页：
+    // startClient 会先把 isJoining 置 true、roomId 仍为 null，旧逻辑此时立刻导航到 join，
+    // 结果用户看到加入页闪一下、成功后再被 AppRoot 带进房间（返回栈多一层）。
+    // 现在直接留在首页等待（全局 Loading 可见），成功后由 AppRoot 直接进入房间；
+    // 失败则错误弹窗留在首页，用户可继续操作。
 
     if (selectedRoomToJoin != null) {
         val room = selectedRoomToJoin!!
@@ -88,7 +84,6 @@ fun HomeScreen(
             confirmButton = {
                 TextButton(onClick = {
                     selectedRoomToJoin = null
-                    pendingQuickJoin = true
                     vm.startClient(room.roomId, "", "", ServerMode.DEFAULT, "")
                 }) { Text("确认加入", color = NeonGreen, fontWeight = FontWeight.Bold) }
             },
@@ -488,7 +483,7 @@ internal fun UpdateDialog(
                 is UpdateState.Downloading -> TextButton(onClick = onCancelDownload) {
                     Text("取消", color = Color.Gray)
                 }
-                is UpdateState.Available, is UpdateState.Error -> TextButton(onClick = onDismiss) {
+                is UpdateState.Available, is UpdateState.Error, is UpdateState.Downloaded -> TextButton(onClick = onDismiss) {
                     Text("稍后", color = Color.Gray)
                 }
                 else -> Unit

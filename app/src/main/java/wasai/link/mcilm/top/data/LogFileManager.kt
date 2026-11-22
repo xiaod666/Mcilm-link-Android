@@ -55,16 +55,9 @@ object LogFileManager {
     fun init(context: Context) {
         if (isInitialized) return
 
-        val dir = try {
-            context.getExternalFilesDir("logs")?.apply {
-                if (!exists()) mkdirs()
-            }
-        } catch (t: Throwable) {
-            Log.e(TAG, "getExternalFilesDir failed", t)
-            null
-        }
-
-        if (dir == null) return
+        // 【修复】外置私有目录不可用（未挂载 / 只读 / 空间满）时直接 return，
+        // 会导致整个日志系统失能、崩溃日志静默丢失。现在回退到内部私有目录。
+        val dir = resolveLogDir(context) ?: return
 
         logDir = dir
         debugFile = File(dir, "mcilmlinkandroid_debug.log")
@@ -89,6 +82,41 @@ object LogFileManager {
             for (msg in logChannel) {
                 writeToFile(msg)
             }
+        }
+    }
+
+    /**
+     * 选择可写的日志目录：优先外部私有目录（用户能直接拿到文件），
+     * 外部不可用时回退到内部私有目录，保证崩溃日志至少能落盘。
+     * 两者都不可写时返回 null（此时日志系统整体失能）。
+     */
+    private fun resolveLogDir(context: Context): File? {
+        val external = try {
+            context.getExternalFilesDir("logs")
+        } catch (t: Throwable) {
+            Log.e(TAG, "getExternalFilesDir failed", t)
+            null
+        }
+
+        if (external != null) {
+            try {
+                if (!external.exists() && !external.mkdirs()) {
+                    Log.w(TAG, "external log dir mkdirs failed, fallback to internal")
+                } else if (external.canWrite()) {
+                    return external
+                }
+            } catch (t: Throwable) {
+                Log.e(TAG, "external log dir unusable, fallback to internal", t)
+            }
+        }
+
+        val internal = File(context.filesDir, "logs")
+        return try {
+            if (!internal.exists() && !internal.mkdirs()) null
+            else if (internal.canWrite()) internal else null
+        } catch (t: Throwable) {
+            Log.e(TAG, "internal log dir unusable", t)
+            null
         }
     }
 

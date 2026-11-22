@@ -48,7 +48,8 @@ fun JoinScreen(vm: MainViewModel, onBack: () -> Unit) {
         if (raw.isNotEmpty()) {
             val (room, pass) = parseRoomText(raw)
             roomIdInput = room.take(80)
-            if (pass.isNotBlank()) passwordInput = pass.take(20)
+            // 扫描到无密码的房间时要清掉上一次输入，避免沿用旧密码导致加入失败
+            passwordInput = pass.take(20)
         }
     }
 
@@ -256,10 +257,14 @@ private fun parseRoomText(raw: String): Pair<String, String> {
         val idx = text.indexOf(sep)
         if (idx > 0) {
             val room = text.substring(0, idx).trim()
-            val pass = text.substring(idx + sep.length)
-                .trim()
-                .trimEnd('）', ')')
-                .trim()
+            var pass = text.substring(idx + sep.length).trim()
+            if (sep.contains("密码")) {
+                // 旧版复制格式是「房间号（密码：xxx）」，只剥掉一个成对的右括号。
+                // 不能无条件 trimEnd(')'/')'），否则密码本身以括号结尾时会被吃掉（如 "abc)" → "abc"）。
+                if (pass.endsWith("）") || pass.endsWith(")")) {
+                    pass = pass.dropLast(1).trim()
+                }
+            }
             if (room.isNotEmpty()) return room to pass
         }
     }
