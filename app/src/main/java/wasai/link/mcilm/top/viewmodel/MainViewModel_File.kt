@@ -196,33 +196,39 @@ internal fun MainViewModel.sendFile(uri: Uri) {
 }
 
 internal fun MainViewModel.fetchFileTasks() {
-    val jsonStr = MciLmNative.linkQuery("fs_tasks") ?: return
-    try {
-        val arr = JSONArray(jsonStr)
-        val list = mutableListOf<FileTaskInfo>()
-        for (i in 0 until arr.length()) {
-            val o = arr.getJSONObject(i)
-            val taskId = o.optString("id", "")
-            var name = o.optString("name", "")
+    // 【修复】linkQuery 是同步 JNI 调用，原先会被事件收集器（主线程）直接调用而卡 UI，
+    // 最坏情况每次 3 秒巡检 + 每个 file_sync_* 事件都在主线程做一次 JSON 解析。
+    // 现在统一丢到 IO，并用一次一条的守卫避免底层卡住时协程越堆越多。
+    if (fileTasksJob?.isActive == true) return
+    fileTasksJob = viewModelScope.launch(Dispatchers.IO) {
+        val jsonStr = MciLmNative.linkQuery("fs_tasks") ?: return@launch
+        try {
+            val arr = JSONArray(jsonStr)
+            val list = mutableListOf<FileTaskInfo>()
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                val taskId = o.optString("id", "")
+                var name = o.optString("name", "")
 
-            if (name.isBlank() || name.startsWith("unknown")) {
-                name = taskNamesCache[taskId] ?: "任务_${taskId.takeLast(6)}"
-            } else {
-                taskNamesCache[taskId] = name
-            }
+                if (name.isBlank() || name.startsWith("unknown")) {
+                    name = taskNamesCache[taskId] ?: "任务_${taskId.takeLast(6)}"
+                } else {
+                    taskNamesCache[taskId] = name
+                }
 
-            list.add(
-                FileTaskInfo(
-                    taskId = taskId, name = name,
-                    direction = o.optString("direction", "unknown"),
-                    status = o.optString("status", "unknown"),
-                    bytes = o.optLong("bytes", 0L),
-                    totalBytes = o.optLong("total_bytes", 0L)
+                list.add(
+                    FileTaskInfo(
+                        taskId = taskId, name = name,
+                        direction = o.optString("direction", "unknown"),
+                        status = o.optString("status", "unknown"),
+                        bytes = o.optLong("bytes", 0L),
+                        totalBytes = o.optLong("total_bytes", 0L)
+                    )
                 )
-            )
-        }
-        _uiState.value = _uiState.value.copy(fileTasks = list)
-    } catch (_: Exception) {}
+            }
+            _uiState.value = _uiState.value.copy(fileTasks = list)
+        } catch (_: Exception) {}
+    }
 }
 
 internal suspend fun MainViewModel.exportSafFile(taskId: String, taskName: String, targetUri: Uri) {

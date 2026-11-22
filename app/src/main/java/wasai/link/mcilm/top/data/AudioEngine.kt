@@ -129,7 +129,14 @@ object AudioEngine {
         if (!running) return -1
         return try {
             val n = rec.read(buf, 0, buf.size)
-            if (n > 0) n else -1
+            // 【修复】read 返回 0 只代表"这一帧暂无数据"，不是错误。
+            // 原来 `if (n > 0) n else -1` 把 0 也当成 -1（错误）上报，
+            // 引擎侧会误判为采集失败，表现为偶发断音。
+            when {
+                n > 0 -> n   // 正常读到 n 字节
+                n == 0 -> 0  // 暂无数据，让引擎稍后再拉
+                else -> -1   // AudioRecord.ERROR_* 等真正的错误
+            }
         } catch (t: Throwable) {
             Log.e(TAG, "onAudioRead failed", t)
             -1

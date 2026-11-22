@@ -52,7 +52,6 @@ fun HomeScreen(
 ) {
     val state by vm.uiState.collectAsStateWithLifecycle()
     val updateState by vm.updateState.collectAsStateWithLifecycle()
-    val updateDialogVisible by vm.updateDialogVisible.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     var selectedRoomToJoin by remember { mutableStateOf<PublicRoom?>(null) }
@@ -65,10 +64,12 @@ fun HomeScreen(
         vm.fetchActivities()
     }
 
-    LaunchedEffect(state.isJoining) {
+    // 【修复】快捷加入：若 startClient 已经把 roomId 写好（同一帧一起更新），
+    // 就不要再跳 JoinScreen，直接由 AppRoot 进入房间界面，避免"房间→加入页"的错序导航。
+    LaunchedEffect(state.isJoining, state.roomId) {
         if (state.isJoining && pendingQuickJoin) {
             pendingQuickJoin = false
-            onNavigateJoin()
+            if (state.roomId == null) onNavigateJoin()
         }
     }
 
@@ -95,17 +96,6 @@ fun HomeScreen(
                 TextButton(onClick = { selectedRoomToJoin = null }) { Text("取消", color = Color.Gray) }
             },
             containerColor = DarkSurface
-        )
-    }
-
-    // 更新对话框（发现新版本时显示）
-    if (updateDialogVisible) {
-        UpdateDialog(
-            state = updateState,
-            onDismiss = { vm.dismissUpdateDialog() },
-            onDownload = { vm.startDownloadUpdate() },
-            onInstall = { vm.installDownloadedApk() },
-            onCancelDownload = { vm.cancelDownloadUpdate() }
         )
     }
 
@@ -398,10 +388,10 @@ fun PublicRoomCard(room: PublicRoom, onClick: () -> Unit) {
     }
 }
 
-// ===== 更新对话框（内嵌，无需改 AppRoot） =====
+// ===== 更新对话框（在 AppRoot 中全局渲染，任何页面都能弹出） =====
 
 @Composable
-private fun UpdateDialog(
+internal fun UpdateDialog(
     state: UpdateState,
     onDismiss: () -> Unit,
     onDownload: () -> Unit,

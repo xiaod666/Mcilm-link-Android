@@ -96,7 +96,13 @@ data class UiState(
     val activities: List<ActivityInfo> = emptyList(),
     val inviteInfo: InviteResponse? = null,
     val feedbackList: List<FeedbackItem> = emptyList(),
-    val accountUpdateCounter: Int = 0
+    val accountUpdateCounter: Int = 0,
+    /**
+     * 最近一次「轮换持久 Token」拿到的新值。
+     * 非空时设置页会弹出可复制的详情框；用户关闭后置回 null。
+     * （此前 rotateToken 的返回值被直接丢弃，界面只提示"请保存好新值"却无值可保存）
+     */
+    val rotatedToken: String? = null
 )
 
 data class HostParams(
@@ -145,6 +151,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     internal var lastHostParams: HostParams? = null
     internal var lastJoinParams: ClientParams? = null
     internal var patrolJob: Job? = null
+    internal var fileTasksJob: Job? = null
     internal var reconnectJob: Job? = null
     internal var nodeNamesMap: Map<String, String> = emptyMap()
 
@@ -265,6 +272,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun dismissError() { _uiState.value = _uiState.value.copy(errorMsg = null) }
+
+    /**
+     * 【修复】手动关闭卡死的全局 Loading 弹窗。
+     *
+     * 原先 AppRoot 的 Loading AlertDialog 完全不可取消，只要某条路径忘记把 isLoading 复位，
+     * 用户就会被永久锁死（只能杀进程）。现在超过 12 秒后允许用户主动关掉弹窗。
+     *
+     * 注意：这里只复位 UI 状态，不会中断后台正在进行的网络/原生调用；
+     * 对应操作完成时仍会按自身逻辑写回 UiState。
+     */
+    fun cancelLoading() {
+        if (!_uiState.value.isLoading) return
+        MciLmNative.logApp("用户手动关闭了全局 Loading 弹窗（loadingMsg=${_uiState.value.loadingMsg}）")
+        _uiState.value = _uiState.value.copy(isLoading = false, loadingMsg = "")
+    }
 
     override fun onCleared() {
         stopPatrol()

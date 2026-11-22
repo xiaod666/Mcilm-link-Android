@@ -3,6 +3,7 @@ package wasai.link.mcilm.top.ui
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -226,10 +227,13 @@ fun HostScreen(vm: MainViewModel, onBack: () -> Unit) {
             else "${state.roomId} pass:${state.roomPassword}"
         } else ""
     }
+    // 【修复】复制文本必须与二维码 / 加入页解析保持同一格式（"房间号 pass:密码"）。
+    // 之前复制的是中文「房间号（密码：xxx）」，JoinScreen 只认 " pass:"，
+    // 用户粘贴复制内容时整串会被当成房间号、密码也拆不出来。
     val copyText = remember(state.roomId, state.roomPassword) {
         if (state.roomId != null) {
             if (state.roomPassword.isNullOrBlank()) state.roomId!!
-            else "${state.roomId}（密码：${state.roomPassword}）"
+            else "${state.roomId} pass:${state.roomPassword}"
         } else ""
     }
 
@@ -264,7 +268,7 @@ fun HostScreen(vm: MainViewModel, onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("创建房间") },
+                title = { Text(if (state.roomId != null) "联机房间" else "创建房间") },
                 navigationIcon = {
                     IconButton(onClick = {
                         if (!state.isLoading) {
@@ -385,7 +389,10 @@ fun HostScreen(vm: MainViewModel, onBack: () -> Unit) {
                             }
                         }
                         Spacer(Modifier.height(4.dp))
-                        Text("已开启功能: ${formatFeatures(features)}", style = MaterialTheme.typography.bodySmall, color = Color.LightGray)
+                        // 该行读的是"开房表单"里的本地状态，访客进房后没有这些表单值，显示会误导
+                        if (state.isHosting) {
+                            Text("已开启功能: ${formatFeatures(features)}", style = MaterialTheme.typography.bodySmall, color = Color.LightGray)
+                        }
                     }
                 }
                 Box(modifier = Modifier.weight(1f).fillMaxWidth().padding(top = 16.dp)) {
@@ -437,7 +444,12 @@ fun HostScreen(vm: MainViewModel, onBack: () -> Unit) {
 
                         Row {
                             TextButton(onClick = { showLogSheet = true }) { Text("运行日志") }
-                            TextButton(onClick = { showStopDialog = true }) { Text("停止并解散房间", color = MaterialTheme.colorScheme.error) }
+                            TextButton(onClick = { showStopDialog = true }) {
+                                Text(
+                                    if (state.isHosting) "停止并解散房间" else "退出房间",
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
                         }
                     }
                 }
@@ -622,7 +634,12 @@ fun HostScreen(vm: MainViewModel, onBack: () -> Unit) {
     }
 
     if (showQrDialog && state.roomId != null) {
-        val qrBitmap = remember(state.roomId, state.roomPassword) { QrCodeUtils.generateQrCode(qrText) }
+        // 【修复】二维码编码 + 512×512 位图填充很吃 CPU，改到后台线程生成，避免主线程卡顿
+        val qrState by produceState<Bitmap?>(null, qrText) {
+            value = QrCodeUtils.generateQrCodeAsync(qrText)
+        }
+        // 取出为普通局部变量，便于下面的空值智能转换
+        val qrBitmap = qrState
         AlertDialog(
             onDismissRequest = { showQrDialog = false },
             title = { Text("扫码加入") },
@@ -710,8 +727,13 @@ fun HostScreen(vm: MainViewModel, onBack: () -> Unit) {
     if (showPermissionDialog) AlertDialog(onDismissRequest = { showPermissionDialog = false }, title = { Text("权限不足") }, text = { Text("当前账号不支持开启公开房。") }, confirmButton = { TextButton(onClick = { showPermissionDialog = false }) { Text("知道了") } })
     if (showStopDialog) AlertDialog(
         onDismissRequest = { showStopDialog = false },
-        title = { Text("停止房间") },
-        text = { Text("确认解散当前房间吗？") },
+        title = { Text(if (state.isHosting) "解散房间" else "退出房间") },
+        text = {
+            Text(
+                if (state.isHosting) "确认解散当前房间吗？解散后房间内所有玩家都会断开。"
+                else "确认退出当前房间吗？"
+            )
+        },
         confirmButton = { TextButton(onClick = { showStopDialog = false; vm.stopSession(); onBack() }) { Text("确认", color = MaterialTheme.colorScheme.error) } },
         dismissButton = { TextButton(onClick = { showStopDialog = false }) { Text("取消") } }
     )

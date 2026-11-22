@@ -1,9 +1,9 @@
 package wasai.link.mcilm.top.ui
 
+import android.graphics.Bitmap
 import android.widget.Toast
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.*import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -85,7 +85,11 @@ fun InviteScreen(vm: MainViewModel, onBack: () -> Unit) {
 
                 // 二维码
                 if (invite.link.isNotBlank()) {
-                    val qr = remember(invite.link) { QrCodeUtils.generateQrCode(invite.link) }
+                    // 【修复】改到后台线程生成，避免主线程做编码 + 位图填充
+                    val qrState by produceState<Bitmap?>(null, invite.link) {
+                        value = QrCodeUtils.generateQrCodeAsync(invite.link)
+                    }
+                    val qr = qrState
                     if (qr != null) {
                         Card(colors = CardDefaults.cardColors(containerColor = DarkSurface), shape = RoundedCornerShape(12.dp)) {
                             Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {

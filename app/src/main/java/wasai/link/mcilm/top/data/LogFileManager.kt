@@ -99,7 +99,11 @@ object LogFileManager {
             val sw = StringWriter()
             throwable.printStackTrace(PrintWriter(sw))
             val stackTrace = sw.toString()
-            val safeTrace = ipRegex.replace(tokenRegex.replace(stackTrace, "mci_***"), "*.*.*.*")
+            // 【修复】原实现只脱敏 token 与 IPv4，堆栈里若夹带密码（如 url/参数串）会原样落盘
+            var safeTrace = passJsonRegex.replace(stackTrace) { m -> "${m.groupValues[1]}***${m.groupValues[3]}" }
+            safeTrace = passEqRegex.replace(safeTrace) { m -> "${m.groupValues[1]}***" }
+            safeTrace = tokenRegex.replace(safeTrace, "mci_***")
+            safeTrace = ipRegex.replace(safeTrace, "*.*.*.*")
 
             val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).apply { timeZone = this@LogFileManager.timeZone }
             val time = sdf.format(Date())
@@ -111,7 +115,11 @@ object LogFileManager {
                     if (it.length() > MAX_DEBUG_FILE_SIZE) rotateDebugLog(it)
                     it.appendText(crashLine)
                 }
-                currentFile?.appendText(crashLine)
+                // 【修复】崩溃路径同样要分卷，否则 session 日志会被异常撑爆
+                currentFile?.let {
+                    if (it.length() > MAX_SESSION_FILE_SIZE) rotateSessionLog(it)
+                    it.appendText(crashLine)
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Write crash failed", e)
@@ -164,11 +172,7 @@ object LogFileManager {
             val logLine = "${sdf.format(Date())} | $msg\n"
 
             synchronized(this) {
-                if (file.length() > MAX_SESSION_FILE_SIZE) {
-                    val oldFile = File(logDir, "${file.nameWithoutExtension}_part${System.currentTimeMillis()}.log")
-                    file.renameTo(oldFile)
-                    file.createNewFile()
-                }
+                if (file.length() > MAX_SESSION_FILE_SIZE) rotateSessionLog(file)
                 file.appendText(logLine)
 
                 if (isError) {
@@ -180,6 +184,20 @@ object LogFileManager {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Write log failed", e)
+        }
+    }
+
+    /** session 日志分卷：超过 5MB 时改名保留，并新建空文件继续写 */
+    private fun rotateSessionLog(file: File) {
+        try {
+            val oldFile = File(logDir, "${file.nameWithoutExtension}_part${System.currentTimeMillis()}.log")
+            if (!file.renameTo(oldFile)) {
+                // 改名失败（如外部存储异常）时至少清空，避免单文件无限增长
+                file.delete()
+            }
+            file.createNewFile()
+        } catch (e: Exception) {
+            Log.e(TAG, "Rotate session log failed", e)
         }
     }
 

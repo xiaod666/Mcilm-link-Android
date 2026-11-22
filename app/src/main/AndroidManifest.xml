@@ -15,6 +15,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <!-- 请求忽略电池优化 -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- 联机保活：锁屏后维持 CPU 与 Wi-Fi 唤醒（仅前台服务内使用） -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- ============================================================= -->
 
     <!-- 声明相机权限，并标记为可选（保证无相机设备如平板、电视也能安装） -->
@@ -29,6 +31,7 @@
         </intent>
     </queries>
     <application
+        android:name=".MciLmApp"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"

@@ -383,9 +383,22 @@ internal fun MainViewModel.clearPrivateLib() {
 internal fun MainViewModel.rotateToken() {
     viewModelScope.launch {
         repo.rotateToken()
-            .onSuccess { _uiEvent.tryEmit(UiEvent.ShowSnackbar("Token 已轮换，请保存好新值")) }
+            .onSuccess { newToken ->
+                // 【修复】新 Token 之前被直接丢弃，用户根本无法"保存好新值"
+                _uiState.value = _uiState.value.copy(rotatedToken = newToken)
+                MciLmNative.logApp("持久 Token 轮换成功（长度 ${newToken.length}），旧值已失效")
+                _uiEvent.tryEmit(
+                    UiEvent.ShowSnackbar("Token 已轮换，旧值立即失效，请立即复制保存新值", isLong = true)
+                )
+            }
             .onFailure { e -> if (!handleAuthError(e)) _uiEvent.tryEmit(UiEvent.ShowSnackbar("Token 轮换失败: ${e.message}", isLong = true)) }
     }
+}
+
+/** 关闭「新 Token」弹窗（用户已复制或主动忽略） */
+fun MainViewModel.dismissRotatedToken() {
+    if (_uiState.value.rotatedToken == null) return
+    _uiState.value = _uiState.value.copy(rotatedToken = null)
 }
 
 internal fun MainViewModel.overrideToken(newToken: String) {

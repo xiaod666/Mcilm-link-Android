@@ -19,7 +19,7 @@
 
 - **应用名称**：Mcilm-link 安卓版
 - **包名 Namespace**：`wasai.link.mcilm.top`（发布后不可更改）
-- **版本号**：`1.6.2` (versionCode 15)
+- **版本号**：`1.6.4` (versionCode 18)
 - **ABI 支持**：仅支持 `arm64-v8a`（不提供 32 位 ARM、x86、x86_64 兜底）
 - **最低支持**：Android 7.0 (API 24)
 - **目标版本**：Android 14 (targetSdk 34)
@@ -41,6 +41,7 @@
 
 ```text
 wasai.link.mcilm.top
+ ├── MciLmApp.kt                 - Application：日志早期初始化 + 全局未捕获异常落盘
  ├── data
  │    ├── AudioEngine.kt           - 语音采集播放引擎（AEC + NS，兼容性降级）
  │    ├── GiteeUpdateSource.kt     - Gitee 更新源实现
@@ -153,12 +154,41 @@ wasai.link.mcilm.top
 - [x] 国产 ROM AEC 音频兼容降级。
 - [x] 大文件传输拦截与限制提示。
 - [x] 日志系统深度优化（暂停滚动、分类过滤、Debug 修复）。
+- [x] 访客加入后自动进入房间界面（房间页按房主 / 访客区分文案与返回逻辑）。
+- [x] 全局崩溃捕获（Application + 未捕获异常处理器）与崩溃日志脱敏、分卷。
+- [x] APK 断点续传实装（Range / 200 / 416 全路径）与后台唤醒锁（仅房间会话内持有）。
 
 **待办：**
 - [ ] 大文件传输真正的分块与断点续传（等待底层引擎支持）。
 - [ ] 优化 WebView 渲染长公告时的性能表现。
 
 # MciLm-link安卓版 更新日志
+
+## [1.6.4] - 2026-11-22
+**核心主题：联机链路收尾、日志与更新体验修复、崩溃落盘与后台保活补齐**
+
+### 🐛 Bug 修复
+- **访客加入后进不了房间界面（P0）**：`room` 路由虽然注册了 `HostScreen`，但全工程没有任何 `navigate("room")` 调用，访客加房成功后仍停留在加入页，聊天、文件、成员、停止房间全部不可达。现在 `AppRoot` 监听 `roomId + isJoining` 自动进入房间，并把加入页从返回栈中替换掉；房间内标题、底部按钮与停止确认框按房主 / 访客区分文案。
+- **复制房间信息与加入页解析不兼容**：复制出来的是「房间号（密码：xxx）」，加入页只认 `房间号 pass:密码`，粘贴后整串会被当成房间号、密码也拆不出来。现在复制内容与二维码统一为 `房间号 pass:密码`，加入页新增 `parseRoomText()` 兼容 ` pass:`、`（密码：xxx）`、`(密码:xxx)` 与纯房间号，扫码 / 粘贴 / 提交三处共用。
+- **日志面板满 1000 条后停止刷新**：到达上限后是「删一条 + 加一条」，`size` 恒定使 `remember(size)` 永不失效，界面从此卡在旧列表上；首次打开还会因为读到上一帧的空列表而 `scrollToItem(-1)`。现在直接在组合期过滤 `SnapshotStateList`，自动滚动改用单调递增的 `logRevision` 触发。
+- **全局 Loading 卡死无法取消**：`onDismissRequest` 与 `confirmButton` 都是空实现，任何一条忘记复位 `isLoading` 的路径都会把用户永久锁死。现在超过 12 秒出现「取消操作」，只复位 UI 状态、不打断后台请求，正常耗时内行为不变。
+- **设置页「检查更新」绕过全局状态**：原先直接 `new UpdateManager()` 做一次性检查，只弹一个 Toast，`updateState` 毫无变化，首页红点与更新弹窗都不会出现，发现新版本后无法继续下载安装。现在统一走 `vm.checkForUpdate(silent = true, force = true)`，并把更新弹窗从 `HomeScreen` 提升到 `AppRoot` 全局渲染。
+- **错误弹窗「重试」会删掉已记住的密码**：`retryLastAction()` 固定传 `rememberMe = false`，而 `login()` 在该分支会调用 `removeRememberedAccount()`。现在改为沿用该账号当前的记住状态。
+- **轮换持久 Token 后新值被丢弃**：`rotateToken()` 的返回值此前被直接忽略，界面只提示「请保存好新值」却看不到任何值。现在写入 `UiState.rotatedToken`，设置页弹出只读输入框并支持一键复制到剪贴板。
+- **公告列表重复 key 崩溃（P1）**：公告页用 `items(list, key = { it.id })` 渲染，服务端分页重叠或缓存重复时会抛 `IllegalArgumentException: Key was already used`。现在与公开房间一致，在下发 UI 前 `distinctBy { it.id }` 去重，未读数基于去重后的列表计算。
+- **音频采集 `read == 0` 被误判为错误（P1）**：`if (n > 0) n else -1` 把「这一帧暂无数据」与「采集失败」混为一谈，引擎侧误判后表现为偶发断音。现在区分 `n > 0`、`n == 0`、负值三态。
+- **APK 断点续传是死代码**：旧实现「缓存未命中就 `delete()`」，使 `startOffset` 恒为 0，Range / 206 / 416 分支永远走不到。现在保留残缺安装包真正续传，兼容服务端忽略 Range 回 200 的情况，416 改为循环重试一次（不再递归调用自身），最终仍走大小 + 签名双重校验。
+
+### 🛠️ 优化与重构
+- **主线程 JNI 与二维码卡顿**：`fetchFileTasks()` 的同步 `linkQuery("fs_tasks")` 会被事件收集器（主线程）直接调用，最坏情况每个 3 秒巡检 + 每个 `file_sync_*` 事件都在主线程解析 JSON；现在整体移到 IO 并加单飞守卫，避免底层卡住时协程堆积。二维码由逐像素 `setPixel`（512×512 = 26 万次）改为 `IntArray + setPixels`，并用 `produceState` 在 `Dispatchers.Default` 生成。
+- **崩溃堆栈真正落盘**：工程此前既没有 `Application` 子类，也没有 `setDefaultUncaughtExceptionHandler`，`LogFileManager.writeCrash()` 是一段永远走不到的死代码。新增 `MciLmApp` 在进程启动最早期初始化日志并注册全局异常处理器，崩溃堆栈同步落盘后交回系统默认处理器；同时补齐崩溃路径的密码脱敏与 session 日志分卷。
+- **后台保活名副其实**：`LinkKeepAliveService` 此前只挂了一条前台通知，锁屏后 CPU 仍会休眠，联机心跳 / 语音被系统挂起。现在进入房间时持有 `PARTIAL_WAKE_LOCK` + Wi-Fi 高性能锁（最长 12 小时），退房、停止保活、`onDestroy` 都会自动释放；只在房间会话中持锁，避免「仅登录没开房」也一直耗电。新增 `WAKE_LOCK` 普通权限。
+- **记住账号去重加固**：登录页用 `items(accounts, key = { it.account })` 渲染，旧版本残留或异常写入产生的重复账号会直接闪退；现在读取时 `distinctBy` 去重，并把清理后的列表写回加密存储。
+- 访客快捷加入的导航顺序修正：`roomId` 与 `isJoining` 在同一帧写入时不再先跳加入页、再跳房间，返回栈不会出现「房间 → 加入页」的错序。
+
+### 🔧 构建与配置
+- `versionName` 升级至 `1.6.4`，`versionCode` 升级至 `18`。
+- **升级提示**：本次新增 `Application` 类与 `WAKE_LOCK` 权限，旧安装包需要覆盖安装（重装）后才会生效。
 
 ## [1.6.3-beta] - 2026-11-17
 **核心主题：修正应用内更新版本判断并补充开源项目入口**

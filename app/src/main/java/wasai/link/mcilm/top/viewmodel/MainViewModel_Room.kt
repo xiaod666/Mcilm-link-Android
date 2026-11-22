@@ -309,7 +309,11 @@ internal fun MainViewModel.retryLastAction() {
     _uiState.value = _uiState.value.copy(errorMsg = null)
 
     if (_uiState.value.authState == AuthState.Unauthenticated && lastLoginParams != null) {
-        login(lastLoginParams!!.first, lastLoginParams!!.second, rememberMe = false)
+        val (account, password) = lastLoginParams!!
+        // 【修复】原先固定 rememberMe = false，会让 login() 走到 removeRememberedAccount 分支，
+        // 用户点一次「重试」就把已记住的密码删掉了。这里沿用该账号当前的记住状态。
+        val keepRemembered = tokenManager.getRememberedAccounts().any { it.account == account }
+        login(account, password, rememberMe = keepRemembered)
     } else if (lastHostParams != null) {
         startHost(
             lastHostParams!!.roomMeta, lastHostParams!!.features, lastHostParams!!.ports,

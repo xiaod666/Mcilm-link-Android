@@ -9,7 +9,14 @@ import java.io.File
 
 // ===== 应用内更新模块（GitHub / Gitee 双源） =====
 
-internal fun MainViewModel.checkForUpdate(silent: Boolean) {
+/**
+ * 检查更新。
+ * @param silent 静默模式：不弹 Snackbar（界面自行反馈）
+ * @param force  是否强制刷新（true 会跳过 6 小时缓存并带 ETag 重新请求）。
+ *               默认值跟随 silent：静默通常来自后台自动检查，走缓存即可；
+ *               手动点“检查更新”时可传 silent=true, force=true 拿到最新结果。
+ */
+internal fun MainViewModel.checkForUpdate(silent: Boolean, force: Boolean = !silent) {
     // Bug 2 修复：已有下载好的安装包时，不重新检查，避免覆盖 Downloaded 状态
     val snapshot = _updateState.value
     if (snapshot is UpdateState.Downloaded && snapshot.file.exists()) {
@@ -20,7 +27,7 @@ internal fun MainViewModel.checkForUpdate(silent: Boolean) {
 
     _updateState.value = UpdateState.Checking
     updateJob = viewModelScope.launch(Dispatchers.IO) {
-        updateManager.checkForUpdate(force = !silent)
+        updateManager.checkForUpdate(force = force)
             .onSuccess { info ->
                 if (info != null) {
                     lastAvailableInfo = info

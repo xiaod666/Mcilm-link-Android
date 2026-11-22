@@ -1,5 +1,7 @@
 package wasai.link.mcilm.top.ui
 
+import android.content.ClipData
+import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -27,10 +29,9 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlinx.coroutines.launch
 import wasai.link.mcilm.top.BuildConfig
-import wasai.link.mcilm.top.data.UpdateManager
 import wasai.link.mcilm.top.link.MciLmNative
+import wasai.link.mcilm.top.network.UpdateState
 import wasai.link.mcilm.top.ui.theme.DarkSurface
 import wasai.link.mcilm.top.ui.theme.NeonGreen
 import wasai.link.mcilm.top.viewmodel.*
@@ -49,8 +50,8 @@ fun SettingsScreen(
     onNavigateFeedback: () -> Unit = {},
 ) {
     val state by vm.uiState.collectAsStateWithLifecycle()
+    val updateState by vm.updateState.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
 
     var isExternalLib by remember { mutableStateOf(File(context.filesDir, "lib/libmcilm_link.so").exists()) }
     var kernelVersion by remember { mutableStateOf(MciLmNative.linkVersion() ?: "未知版本") }
@@ -66,6 +67,31 @@ fun SettingsScreen(
         vm.fetchAnnouncements(silent = true)
         vm.fetchActivities()
         vm.fetchInviteInfo()
+    }
+
+    // 【修复】“检查更新”改为消费全局 updateState：
+    // 结果会同步到首页红点与全局更新弹窗，发现新版本时可直接下载安装。
+    LaunchedEffect(updateState, checkingUpdate) {
+        if (!checkingUpdate) return@LaunchedEffect
+        when (val s = updateState) {
+            is UpdateState.Available -> {
+                checkingUpdate = false
+                vm.showUpdateDialog()
+            }
+            is UpdateState.Downloaded -> {
+                checkingUpdate = false
+                vm.showUpdateDialog()
+            }
+            is UpdateState.NotAvailable -> {
+                checkingUpdate = false
+                Toast.makeText(context, "当前已是最新版本", Toast.LENGTH_LONG).show()
+            }
+            is UpdateState.Error -> {
+                checkingUpdate = false
+                Toast.makeText(context, "检查更新失败：${s.message}", Toast.LENGTH_LONG).show()
+            }
+            else -> Unit // Idle / Checking：继续等待结果
+        }
     }
 
     var clickCount by remember { mutableIntStateOf(0) }
@@ -137,31 +163,12 @@ fun SettingsScreen(
 
                     Button(
                         onClick = {
+                            // 【修复】不再自己 new UpdateManager 做一次性检查：
+                            // 原来只弹一个 Toast，updateState 完全没变，首页红点与全局更新弹窗都不会出现，
+                            // 用户在设置页发现新版本后无法继续下载/安装。
                             if (!checkingUpdate) {
-                                scope.launch {
-                                    checkingUpdate = true
-                                    try {
-                                        UpdateManager(context).checkForUpdate(force = true).fold(
-                                            onSuccess = { info ->
-                                                val message = if (info == null) {
-                                                    "当前已是最新版本"
-                                                } else {
-                                                    "发现新版本：${info.versionName} (${info.versionCode})"
-                                                }
-                                                Toast.makeText(context, message, Toast.LENGTH_LONG).show()
-                                            },
-                                            onFailure = { error ->
-                                                Toast.makeText(
-                                                    context,
-                                                    "检查更新失败：${error.message ?: "未知错误"}",
-                                                    Toast.LENGTH_LONG
-                                                ).show()
-                                            }
-                                        )
-                                    } finally {
-                                        checkingUpdate = false
-                                    }
-                                }
+                                checkingUpdate = true
+                                vm.checkForUpdate(silent = true, force = true)
                             }
                         },
                         enabled = !checkingUpdate,
@@ -484,6 +491,49 @@ fun SettingsScreen(
             dismissButton = {
                 TextButton(onClick = { showTokenDialog = false; tokenInput = "" }) { Text("取消") }
             }
+        )
+    }
+
+    // 【修复】轮换成功后展示新 Token：此前返回值被 VM 直接丢弃，
+    // 用户只看到"请保存好新值"，却没有任何地方能看到/复制这个值。
+    val rotatedToken = state.rotatedToken
+    if (rotatedToken != null) {
+        AlertDialog(
+            onDismissRequest = { vm.dismissRotatedToken() },
+            title = { Text("新的持久 Token") },
+            text = {
+                Column {
+                    Text(
+                        "旧 Token 已立即失效。请复制下面的新值并妥善保存（重装或换机后需要它恢复登录）。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.LightGray
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = rotatedToken,
+                        onValueChange = {},
+                        readOnly = true,
+                        singleLine = true,
+                        label = { Text("mci_...") },
+                        textStyle = MaterialTheme.typography.bodySmall
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    try {
+                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                        cm?.setPrimaryClip(ClipData.newPlainText("mci_token", rotatedToken))
+                        Toast.makeText(context, "新 Token 已复制到剪贴板", Toast.LENGTH_SHORT).show()
+                    } catch (_: Throwable) {
+                        Toast.makeText(context, "复制失败，请手动选择文本", Toast.LENGTH_SHORT).show()
+                    }
+                }) { Text("复制", color = NeonGreen, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { vm.dismissRotatedToken() }) { Text("关闭", color = Color.Gray) }
+            },
+            containerColor = DarkSurface
         )
     }
 }

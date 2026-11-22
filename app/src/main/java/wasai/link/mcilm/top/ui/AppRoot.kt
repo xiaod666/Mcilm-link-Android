@@ -44,6 +44,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import wasai.link.mcilm.top.link.MciLmNative
@@ -58,6 +59,9 @@ import wasai.link.mcilm.top.viewmodel.UiEvent
 fun AppRoot(vm: MainViewModel = viewModel()) {
     val context = LocalContext.current
     val state by vm.uiState.collectAsState()
+    // 【修复】更新状态提升到全局，任何页面都能弹出更新对话框
+    val updateState by vm.updateState.collectAsState()
+    val updateDialogVisible by vm.updateDialogVisible.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val navController = rememberNavController()
 
@@ -94,6 +98,18 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
             // 退出登录时停止保活服务
             context.stopService(Intent(context, LinkKeepAliveService::class.java))
         }
+    }
+
+    // 【修复】唤醒锁跟随「是否在房间中」：进房才真正持锁，退房立即释放，
+    // 避免"仅登录但没开房"时一直持有 PARTIAL_WAKE_LOCK 白白耗电。
+    LaunchedEffect(state.authState, state.roomId) {
+        if (state.authState != AuthState.Authenticated) return@LaunchedEffect
+        val lockIntent = Intent(context, LinkKeepAliveService::class.java).apply {
+            action = LinkKeepAliveService.ACTION_SET_ACTIVE
+            putExtra(LinkKeepAliveService.EXTRA_ACTIVE, state.roomId != null)
+        }
+        // 后台启动限制（Android 8+/12+）下可能抛异常，唤醒锁属于可选增强，失败不影响主流程
+        runCatching { context.startService(lockIntent) }
     }
 
     LaunchedEffect(Unit) {
@@ -142,6 +158,21 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
     }
 
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
+
+    // 【修复】访客加入成功后自动进入房间界面。
+    // 此前 "room" 路由虽然注册了 HostScreen，但全工程没有任何 navigate 调用，
+    // 导致访客加房成功后仍停留在 JoinScreen，聊天 / 文件 / 成员 / 停止房间全部不可达。
+    LaunchedEffect(currentRoute, state.roomId, state.isJoining, state.isHosting) {
+        val route = currentRoute
+        if (route == null || route == "room" || route == "host") return@LaunchedEffect
+        if (state.roomId == null || state.isHosting || !state.isJoining) return@LaunchedEffect
+        navController.navigate("room") {
+            launchSingleTop = true
+            // 从加入页进来的话，把它从返回栈里替换掉，避免退出房间后回到空的加入页
+            if (route == "join") popUpTo("join") { inclusive = true }
+        }
+    }
+
     var wasInSession by remember { mutableStateOf(false) }
     LaunchedEffect(currentRoute, state.roomId, state.isHosting, state.isJoining) {
         val inRoom = currentRoute == "host" || currentRoute == "join" || currentRoute == "room"
@@ -179,8 +210,19 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
                 } else {
                     // 【修复】加上 currentRoute != "login" 的判断，防止在登录页弹全局 Loading 弹窗
                     if (state.isLoading && currentRoute != "login") {
+                        // 【修复】全局 Loading 此前完全不可取消（onDismissRequest = {}、confirmButton = {}），
+                        // 任何一条忘记复位 isLoading 的路径都会把用户永久锁在弹窗里。
+                        // 现在超时 12 秒后给出「取消操作」出口，正常耗时内行为不变。
+                        var allowCancelLoading by remember { mutableStateOf(false) }
+                        LaunchedEffect(state.isLoading, state.loadingMsg) {
+                            allowCancelLoading = false
+                            if (state.isLoading) {
+                                delay(12_000L)
+                                allowCancelLoading = true
+                            }
+                        }
                         AlertDialog(
-                            onDismissRequest = { },
+                            onDismissRequest = { if (allowCancelLoading) vm.cancelLoading() },
                             title = { Text("请稍候") },
                             text = {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -189,7 +231,13 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
                                     Text(state.loadingMsg)
                                 }
                             },
-                            confirmButton = { }
+                            confirmButton = {
+                                if (allowCancelLoading) {
+                                    TextButton(onClick = { vm.cancelLoading() }) {
+                                        Text("取消操作", color = MaterialTheme.colorScheme.error)
+                                    }
+                                }
+                            }
                         )
                     }
 
@@ -262,6 +310,18 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
                         composable("feedback") {
                             FeedbackScreen(vm, onBack = { navController.popBackStack() })
                         }
+                    }
+
+                    // 【修复】更新对话框从 HomeScreen 内嵌提升为全局：
+                    // 设置页“检查更新”发现新版本后即可直接下载/安装，不再只能回首页点红点。
+                    if (updateDialogVisible) {
+                        UpdateDialog(
+                            state = updateState,
+                            onDismiss = { vm.dismissUpdateDialog() },
+                            onDownload = { vm.startDownloadUpdate() },
+                            onInstall = { vm.installDownloadedApk() },
+                            onCancelDownload = { vm.cancelDownloadUpdate() }
+                        )
                     }
                 }
 

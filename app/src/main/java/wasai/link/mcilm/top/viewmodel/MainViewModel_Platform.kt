@@ -12,9 +12,14 @@ internal fun MainViewModel.fetchAnnouncements(silent: Boolean = false) {
     viewModelScope.launch(Dispatchers.IO) {
         repo.getAnnouncements()
             .onSuccess { resp ->
+                // 【修复】服务端分页重叠 / 缓存可能导致同一公告返回多次，
+                // 而公告列表用 items(list, key = { it.id }) 渲染，
+                // 重复 key 会让 Compose 抛 IllegalArgumentException: Key was already used 直接闪退。
+                // 与公开房间一致，在下发到 UI 之前就去重。
+                val unique = resp.list.distinctBy { it.id }
                 _uiState.value = _uiState.value.copy(
-                    announcements = resp.list,
-                    unreadAnnouncementCount = resp.list.count { !it.read }
+                    announcements = unique,
+                    unreadAnnouncementCount = unique.count { !it.read }
                 )
             }
             .onFailure { e ->

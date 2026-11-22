@@ -122,10 +122,16 @@ class TokenManager(context: Context) {
                 }
             }
 
-            if (needCleanup) {
+            // 【加固】去重：旧版本数据或异常写入可能留下重复账号，
+            // 而登录页用 items(accounts, key = { it.account }) 渲染，
+            // 重复 key 会抛 IllegalArgumentException: Key was already used 直接闪退。
+            val deduped = result.distinctBy { it.account }
+            val hasDuplicate = deduped.size != result.size
+
+            if (needCleanup || hasDuplicate) {
                 try {
                     val newArray = JSONArray()
-                    for (acc in result) {
+                    for (acc in deduped) {
                         newArray.put(accountToJson(acc))
                     }
                     sharedPreferences.edit(commit = true) { putString("remembered_accounts_list", newArray.toString()) }
@@ -133,7 +139,7 @@ class TokenManager(context: Context) {
                     Log.e("TokenManager", "cleanup remembered accounts failed", t)
                 }
             }
-            result
+            deduped
         } catch (t: Throwable) {
             Log.e("TokenManager", "readRememberedAccounts彻底失败", t)
             null

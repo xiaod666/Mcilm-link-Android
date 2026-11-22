@@ -299,91 +299,112 @@ class UpdateManager(context: Context) {
                 "${info.source}_${tagForFile}_${info.versionCode}.apk"
             )
 
-            // 缓存命中。
+            // ---------- 缓存判定 ----------
             if (apkFile.exists()) {
-                val sizeOk = info.apkSize <= 0L || apkFile.length() == info.apkSize
-                if (sizeOk && verifySignature(apkFile)) {
+                val cachedLen = apkFile.length()
+                val sizeMatches = info.apkSize <= 0L || cachedLen == info.apkSize
+                if (sizeMatches && verifySignature(apkFile)) {
                     MciLmNative.logApp("[Update] 命中本地缓存 ${apkFile.name}")
                     return@withContext Result.success(apkFile)
                 }
-
-                // 文件大小或签名不匹配，删除后重新下载。
-                apkFile.delete()
-            }
-
-            // Range 续传。
-            val startOffset =
-                if (apkFile.exists() && info.apkSize > 0L) apkFile.length() else 0L
-
-            val reqBuilder = Request.Builder().url(info.downloadUrl)
-            if (startOffset > 0L) {
-                reqBuilder.header("Range", "bytes=$startOffset-")
-            }
-
-            // Gitee 附件链接偶有防盗链，带 Referer 更稳。
-            if (info.source == "gitee") {
-                reqBuilder.header("Referer", "https://gitee.com/")
-            }
-
-            val call = http.newCall(reqBuilder.build())
-            synchronized(lock) {
-                inFlight = call
-            }
-
-            try {
-                call.execute().use { resp ->
-                    // Range 越界：远端文件可能已替换，清空后重新下载。
-                    if (resp.code == 416) {
-                        apkFile.delete()
-                        return@withContext downloadApk(info, onProgress)
-                    }
-
-                    if (!resp.isSuccessful && resp.code != 206) {
-                        throw IOException("下载失败 HTTP ${resp.code}")
-                    }
-
-                    val body = resp.body ?: throw IOException("下载空响应")
-                    val isResume = resp.code == 206
-                    val resumeFrom = if (isResume) startOffset else 0L
-                    val contentLen = body.contentLength()
-
-                    val total = when {
-                        info.apkSize > 0L -> info.apkSize
-                        contentLen > 0L -> contentLen + resumeFrom
-                        else -> 0L
-                    }
-
-                    FileOutputStream(apkFile, isResume).use { output ->
-                        body.byteStream().use { input ->
-                            val buffer = ByteArray(8192)
-                            var written = resumeFrom
-                            var lastReport = 0L
-
-                            while (true) {
-                                val read = input.read(buffer)
-                                if (read <= 0) break
-
-                                output.write(buffer, 0, read)
-                                written += read
-
-                                val now = System.currentTimeMillis()
-                                if (
-                                    now - lastReport >= 300L ||
-                                    (total > 0L && written >= total)
-                                ) {
-                                    onProgress(written, total)
-                                    lastReport = now
-                                }
-                            }
-
-                            // 最后一次进度回调兜底。
-                            onProgress(written, total)
-                        }
-                    }
+                if (info.apkSize > 0L && cachedLen > info.apkSize) {
+                    // 比预期还大：串包或损坏，必须重下
+                    apkFile.delete()
+                } else if (sizeMatches) {
+                    // 大小吻合但签名不对，同样没有保留价值
+                    apkFile.delete()
                 }
-            } finally {
+                // 其余情况（大小不足）：保留不完整文件，下面走 Range 续传
+            }
+
+            // ---------- 断点续传下载 ----------
+            // 【修复】旧实现里"缓存未命中就 delete()"，导致后面的 Range 分支永远不可达。
+            // 现在保留残缺文件，真正按 Content-Length / Range 续传，失败也能下次接着下。
+            var startOffset = if (apkFile.exists() && info.apkSize > 0L) apkFile.length() else 0L
+            if (startOffset > 0L) {
+                MciLmNative.logApp("[Update] 发现未完成的安装包 ${apkFile.length()}B，尝试断点续传")
+            }
+            var retriedAfter416 = false
+            var finished = false
+
+            while (!finished) {
+                val reqBuilder = Request.Builder().url(info.downloadUrl)
+                if (startOffset > 0L) {
+                    reqBuilder.header("Range", "bytes=$startOffset-")
+                }
+
+                // Gitee 附件链接偶有防盗链，带 Referer 更稳。
+                if (info.source == "gitee") {
+                    reqBuilder.header("Referer", "https://gitee.com/")
+                }
+
+                val call = http.newCall(reqBuilder.build())
                 synchronized(lock) {
-                    inFlight = null
+                    inFlight = call
+                }
+
+                try {
+                    call.execute().use { resp ->
+                        // 416：远端文件已替换或偏移越界。删掉重下一次（最多一次），仍失败则报错。
+                        if (resp.code == 416) {
+                            if (retriedAfter416) {
+                                throw IOException("服务器不支持断点续传（HTTP 416），请稍后重试")
+                            }
+                            retriedAfter416 = true
+                            apkFile.delete()
+                            startOffset = 0L
+                            return@use
+                        }
+
+                        if (!resp.isSuccessful && resp.code != 206) {
+                            throw IOException("下载失败 HTTP ${resp.code}")
+                        }
+
+                        val body = resp.body ?: throw IOException("下载空响应")
+                        // 发了 Range 却回 200：服务器忽略了范围请求，只能从头覆盖写
+                        val isResume = resp.code == 206 && startOffset > 0L
+                        val resumeFrom = if (isResume) startOffset else 0L
+                        val contentLen = body.contentLength()
+
+                        val total = when {
+                            info.apkSize > 0L -> info.apkSize
+                            contentLen > 0L -> contentLen + resumeFrom
+                            else -> 0L
+                        }
+
+                        FileOutputStream(apkFile, isResume).use { output ->
+                            body.byteStream().use { input ->
+                                val buffer = ByteArray(8192)
+                                var written = resumeFrom
+                                var lastReport = 0L
+
+                                while (true) {
+                                    val read = input.read(buffer)
+                                    if (read <= 0) break
+
+                                    output.write(buffer, 0, read)
+                                    written += read
+
+                                    val now = System.currentTimeMillis()
+                                    if (
+                                        now - lastReport >= 300L ||
+                                        (total > 0L && written >= total)
+                                    ) {
+                                        onProgress(written, total)
+                                        lastReport = now
+                                    }
+                                }
+
+                                // 最后一次进度回调兜底。
+                                onProgress(written, total)
+                            }
+                        }
+                        finished = true
+                    }
+                } finally {
+                    synchronized(lock) {
+                        inFlight = null
+                    }
                 }
             }
 

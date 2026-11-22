@@ -44,15 +44,11 @@ fun JoinScreen(vm: MainViewModel, onBack: () -> Unit) {
     var passwordVisible by rememberSaveable { mutableStateOf(false) }
 
     val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
-        if (result.contents != null) {
-            val raw = result.contents.trim()
-            if (raw.contains(" pass:")) {
-                val parts = raw.split(" pass:")
-                roomIdInput = parts[0]
-                passwordInput = parts.getOrElse(1) { "" }
-            } else {
-                roomIdInput = raw
-            }
+        val raw = result.contents?.trim().orEmpty()
+        if (raw.isNotEmpty()) {
+            val (room, pass) = parseRoomText(raw)
+            roomIdInput = room.take(80)
+            if (pass.isNotBlank()) passwordInput = pass.take(20)
         }
     }
 
@@ -71,14 +67,10 @@ fun JoinScreen(vm: MainViewModel, onBack: () -> Unit) {
 
     val trySubmit = {
         focusManager.clearFocus()
-        var targetRoom = roomIdInput.trim()
-        var targetPass = passwordInput.trim()
-
-        if (targetRoom.contains(" pass:")) {
-            val parts = targetRoom.split(" pass:")
-            targetRoom = parts[0]
-            if (targetPass.isBlank()) targetPass = parts.getOrElse(1) { "" }
-        }
+        // 【修复】同时兼容 "房间号 pass:密码" 与旧版复制出来的「房间号（密码：xxx）」
+        val parsed = parseRoomText(roomIdInput)
+        val targetRoom = parsed.first
+        val targetPass = passwordInput.trim().ifBlank { parsed.second }
 
         if (targetRoom.isBlank()) {
             Toast.makeText(context, "房间 ID 不能为空", Toast.LENGTH_SHORT).show()
@@ -131,12 +123,13 @@ fun JoinScreen(vm: MainViewModel, onBack: () -> Unit) {
             OutlinedTextField(
                 value = roomIdInput,
                 onValueChange = {
-                    if (it.contains(" pass:")) {
-                        val parts = it.split(" pass:")
-                        roomIdInput = parts[0]
-                        passwordInput = parts.getOrElse(1) { "" }
+                    val cleaned = it.replace("\n", "")
+                    val (room, pass) = parseRoomText(cleaned)
+                    if (pass.isNotBlank()) {
+                        roomIdInput = room.take(80)
+                        passwordInput = pass.take(20)
                     } else {
-                        roomIdInput = checkLimit(it.replace("\n", ""), 80)
+                        roomIdInput = checkLimit(cleaned, 80)
                     }
                 },
                 label = { Text("房间 ID") },
@@ -244,4 +237,31 @@ fun JoinScreen(vm: MainViewModel, onBack: () -> Unit) {
             Spacer(Modifier.height(24.dp))
         }
     }
+}
+
+/**
+ * 【修复】房间文本解析，统一二维码、粘贴、旧版复制三种来源：
+ *  1. 二维码 / 新版复制：`房间号 pass:密码`
+ *  2. 旧版复制：`房间号（密码：xxx）`
+ *  3. 纯房间号（无密码）
+ * 返回 (房间号, 密码)，没有密码时第二项为空串。
+ */
+private fun parseRoomText(raw: String): Pair<String, String> {
+    val text = raw.trim()
+    if (text.isEmpty()) return "" to ""
+
+    // 分隔符按"越具体越靠前"排列，避免中文括号格式被当成普通冒号误切
+    val separators = listOf(" pass:", "（密码：", "（密码:", "(密码：", "(密码:")
+    for (sep in separators) {
+        val idx = text.indexOf(sep)
+        if (idx > 0) {
+            val room = text.substring(0, idx).trim()
+            val pass = text.substring(idx + sep.length)
+                .trim()
+                .trimEnd('）', ')')
+                .trim()
+            if (room.isNotEmpty()) return room to pass
+        }
+    }
+    return text to ""
 }

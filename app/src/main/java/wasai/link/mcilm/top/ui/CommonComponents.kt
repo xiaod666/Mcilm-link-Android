@@ -28,6 +28,9 @@ import wasai.link.mcilm.top.link.MciLmNative
 import wasai.link.mcilm.top.ui.theme.NeonGreen
 import java.io.File
 
+/** 日志面板最多保留的行数（同时也是内存上限，超出后从头部丢弃） */
+private const val MAX_LOG_LINES = 1000
+
 // ==================== [HomeScreen 需要调用的方法] ====================
 fun formatPlayTime(seconds: Long): String {
     if (seconds <= 0) return "0 秒"
@@ -47,19 +50,26 @@ fun formatPlayTime(seconds: Long): String {
 fun McilmLogSheetContent() {
     val logs = remember { mutableStateListOf<String>() }
     val listState = rememberLazyListState()
-    val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
     var autoScroll by remember { mutableStateOf(true) }
     var selectedTab by remember { mutableIntStateOf(0) } // 0=全部, 1=App, 2=内核, 3=报错
+    // 追加计数：达到上限后列表是"删一条加一条"，size 不再变化，
+    // 因此自动滚动必须依赖这个单调递增的版本号，而不是 size。
+    var logRevision by remember { mutableIntStateOf(0) }
 
-    val filteredLogs = remember(logs.size, selectedTab) {
-        when (selectedTab) {
-            1 -> logs.filter { it.contains("[App]") }
-            2 -> logs.filter { it.contains("[Core]") }
-            3 -> logs.filter { it.contains("ERROR", true) || it.contains("失败") || it.contains("Exception") || it.contains("[Error]") }
-            else -> logs.toList()
+    // 【修复】不再用 remember(logs.size, selectedTab) 缓存过滤结果。
+    // 日志到 1000 条上限后是"先 removeAt(0) 再 add"，size 恒定不变，
+    // 旧写法导致 remember 的 key 不再变化，界面从此卡在旧列表上。
+    // logs 是 SnapshotStateList，直接在组合期过滤即可自然响应增删。
+    val filteredLogs = when (selectedTab) {
+        1 -> logs.filter { it.contains("[App]") }
+        2 -> logs.filter { it.contains("[Core]") }
+        3 -> logs.filter {
+            it.contains("ERROR", true) || it.contains("失败") ||
+                it.contains("Exception", true) || it.contains("[Error]", true)
         }
+        else -> logs.toList()
     }
 
     LaunchedEffect(Unit) {
@@ -67,26 +77,30 @@ fun McilmLogSheetContent() {
         logs.addAll(MciLmNative.appLogHistory)
         logs.addAll(MciLmNative.coreLogHistory)
         logs.sort()
+        logRevision++
 
-        if (logs.isNotEmpty()) listState.scrollToItem(filteredLogs.size - 1)
-
+        // 首帧不在这里滚动：此时 LazyColumn 还没被组合出来（会被空态分支占位），
+        // 交给下面按 logRevision 触发的自动滚动协程处理即可，避免 scrollToItem(-1)。
         launch {
             MciLmNative.appLogs.collect { msg ->
-                if (logs.size > 1000) logs.removeAt(0)
+                if (logs.size >= MAX_LOG_LINES) logs.removeAt(0)
                 logs.add(msg)
+                logRevision++
             }
         }
         launch {
             MciLmNative.logs.collect { msg ->
-                if (logs.size > 1000) logs.removeAt(0)
+                if (logs.size >= MAX_LOG_LINES) logs.removeAt(0)
                 logs.add(msg)
+                logRevision++
             }
         }
     }
 
-    LaunchedEffect(filteredLogs.size, autoScroll) {
+    LaunchedEffect(logRevision, autoScroll, selectedTab) {
         if (autoScroll && filteredLogs.isNotEmpty()) {
-            listState.animateScrollToItem(filteredLogs.size - 1)
+            // 高频日志下 animateScrollToItem 会累积动画队列，瞬时定位更稳定
+            listState.scrollToItem(filteredLogs.lastIndex)
         }
     }
 
