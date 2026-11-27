@@ -137,7 +137,7 @@ fun SettingsScreen(
                 .padding(16.dp)
         ) {
             // ==================== 应用信息 ====================
-            Text("应用信息", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = NeonGreen)
+            McilmSectionTitle("应用信息")
             Spacer(Modifier.height(16.dp))
             Card(colors = CardDefaults.cardColors(containerColor = DarkSurface), shape = RoundedCornerShape(12.dp)) {
                 Column(modifier = Modifier.fillMaxWidth()) {
@@ -183,7 +183,7 @@ fun SettingsScreen(
 
             // ==================== 平台功能 ====================
             Spacer(Modifier.height(24.dp))
-            Text("平台功能", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = NeonGreen)
+            McilmSectionTitle("平台功能")
             Spacer(Modifier.height(16.dp))
             Card(colors = CardDefaults.cardColors(containerColor = DarkSurface), shape = RoundedCornerShape(12.dp)) {
                 Column(Modifier.fillMaxWidth()) {
@@ -225,7 +225,7 @@ fun SettingsScreen(
 
             // ==================== 内核信息 ====================
             Spacer(Modifier.height(24.dp))
-            Text("内核信息", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = NeonGreen)
+            McilmSectionTitle("内核信息")
             Spacer(Modifier.height(16.dp))
             Card(colors = CardDefaults.cardColors(containerColor = DarkSurface), shape = RoundedCornerShape(12.dp)) {
                 Column(modifier = Modifier.fillMaxWidth()) {
@@ -278,7 +278,7 @@ fun SettingsScreen(
             // ==================== 高级配置 (仅开发者可见) ====================
             if (state.isDevMode) {
                 Spacer(Modifier.height(24.dp))
-                Text("高级配置", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = NeonGreen)
+                McilmSectionTitle("高级配置")
                 Spacer(Modifier.height(16.dp))
 
                 Card(colors = CardDefaults.cardColors(containerColor = DarkSurface), shape = RoundedCornerShape(12.dp)) {
@@ -304,7 +304,11 @@ fun SettingsScreen(
 
                         Button(
                             onClick = { vm.clearPrivateLib() },
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                            // 破坏性但非"最危险"的动作：用 error 容器色，避免和底部"退出登录"一样刺眼
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer,
+                                contentColor = MaterialTheme.colorScheme.onErrorContainer
+                            ),
                             modifier = Modifier.fillMaxWidth()
                         ) { Text("清理私有库缓存 (下次启动重载)") }
 
@@ -312,7 +316,11 @@ fun SettingsScreen(
 
                         Button(
                             onClick = { showTokenDialog = true; tokenInput = ""; tokenVisible = false },
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary),
+                            // 原来是 tertiary（琥珀色），与全站绿/青主色不搭；改为青色容器
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                            ),
                             modifier = Modifier.fillMaxWidth()
                         ) { Text("强制覆盖 Token") }
 
@@ -339,7 +347,7 @@ fun SettingsScreen(
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.error,
-                    contentColor = Color.White
+                    contentColor = MaterialTheme.colorScheme.onError
                 )
             ) {
                 Text("退出登录", fontSize = 16.sp, fontWeight = FontWeight.Bold)
@@ -360,7 +368,8 @@ fun SettingsScreen(
                 Text("切换账号", fontSize = 16.sp, fontWeight = FontWeight.Bold)
             }
 
-            Spacer(Modifier.height(32.dp)) // 底部安全留白
+            // 底部留白：同时给右下角的全局「运行日志」悬浮按钮让位
+            Spacer(Modifier.height(96.dp))
         }
     }
 

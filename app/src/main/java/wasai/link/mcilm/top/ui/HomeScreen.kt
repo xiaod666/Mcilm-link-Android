@@ -55,7 +55,6 @@ fun HomeScreen(
     val context = LocalContext.current
 
     var selectedRoomToJoin by remember { mutableStateOf<PublicRoom?>(null) }
-    var showLogSheet by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         vm.fetchPublicRooms()
@@ -95,17 +94,7 @@ fun HomeScreen(
     }
 
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
-        floatingActionButton = {
-            SmallFloatingActionButton(
-                onClick = { showLogSheet = true },
-                containerColor = DarkSurface,
-                contentColor = NeonGreen,
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Icon(Icons.Default.Code, contentDescription = "运行日志")
-            }
-        }
+        containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
         Column(
             modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)
@@ -200,8 +189,13 @@ fun HomeScreen(
                         Button(
                             onClick = { vm.checkIn() },
                             shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = NeonGreen.copy(alpha = 0.15f), contentColor = NeonGreen),
-                            border = BorderStroke(1.dp, NeonGreen.copy(alpha = 0.5f))
+                            // 签到属于次级动作：用主题里的"主色容器"做柔和填充，
+                            // 不再手写 15% 透明绿（禁用态会跟着变色，之前会一直是亮绿）
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            ),
+                            border = BorderStroke(1.dp, NeonGreen.copy(alpha = 0.35f))
                         ) {
                             Text("每日签到", fontWeight = FontWeight.Bold)
                         }
@@ -243,11 +237,7 @@ fun HomeScreen(
             Spacer(Modifier.height(24.dp))
 
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(4.dp, 16.dp).background(NeonGreen, RoundedCornerShape(2.dp)))
-                    Spacer(Modifier.width(8.dp))
-                    Text("公开房间", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
-                }
+                McilmSectionTitle("公开房间")
                 TextButton(onClick = { vm.fetchPublicRooms() }, contentPadding = PaddingValues(horizontal = 8.dp)) {
                     Text("刷新", fontSize = 13.sp, color = NeonGreen)
                 }
@@ -286,7 +276,6 @@ fun HomeScreen(
         }
     }
 
-    if (showLogSheet) ModalBottomSheet(onDismissRequest = { showLogSheet = false }) { McilmLogSheetContent() }
 }
 
 private fun sanitizeText(text: String?): String {

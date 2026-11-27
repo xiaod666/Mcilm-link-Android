@@ -9,6 +9,7 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import java.io.File
+import java.io.FileOutputStream
 import java.io.PrintWriter
 import java.io.StringWriter
 import java.text.SimpleDateFormat
@@ -20,6 +21,8 @@ object LogFileManager {
     private const val TAG = "LogFileManager"
     private const val MAX_SESSION_FILE_SIZE = 5 * 1024 * 1024L // Session 日志最大 5MB
     private const val MAX_DEBUG_FILE_SIZE = 1 * 1024 * 1024L   // debug.log 最大 1MB
+    private const val CRASH_FILE_NAME = "mcilmlinkandroid_crash.log"
+    private const val MAX_CRASH_FILE_SIZE = 2 * 1024 * 1024L   // 崩溃日志最大 2MB
     private const val MAX_SESSION_FILES = 10 // 最多保留最近 10 次启动的日志
     private const val CHANNEL_CAPACITY = 10_000
 
@@ -29,6 +32,12 @@ object LogFileManager {
     private var logDir: File? = null
     private var currentFile: File? = null
     private var debugFile: File? = null
+
+    /** 崩溃专用文件：不经过日志 Channel，崩溃时同步写入并 fsync */
+    private var crashFile: File? = null
+
+    /** 崩溃写入使用独立锁，避免被后台日志写线程的 IO 卡住 */
+    private val crashLock = Any()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val logChannel = Channel<String>(
@@ -61,6 +70,7 @@ object LogFileManager {
 
         logDir = dir
         debugFile = File(dir, "mcilmlinkandroid_debug.log")
+        crashFile = File(dir, CRASH_FILE_NAME)
 
         val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.getDefault()).apply {
             timeZone = this@LogFileManager.timeZone
@@ -120,38 +130,86 @@ object LogFileManager {
         }
     }
 
-    /** 强制记录异常堆栈到 debug.log */
-    fun writeCrash(throwable: Throwable, customMsg: String? = null) {
-        if (!isInitialized) return
-        try {
-            val sw = StringWriter()
-            throwable.printStackTrace(PrintWriter(sw))
-            val stackTrace = sw.toString()
-            // 【修复】原实现只脱敏 token 与 IPv4，堆栈里若夹带密码（如 url/参数串）会原样落盘
-            var safeTrace = passJsonRegex.replace(stackTrace) { m -> "${m.groupValues[1]}***${m.groupValues[3]}" }
-            safeTrace = passEqRegex.replace(safeTrace) { m -> "${m.groupValues[1]}***" }
-            safeTrace = tokenRegex.replace(safeTrace, "mci_***")
-            safeTrace = ipRegex.replace(safeTrace, "*.*.*.*")
+    /**
+     * 崩溃专用写入：**同步**完成，不经过日志 Channel、也不等后台写线程。
+     *
+     * 顺序上先写独立的 crash.log 并 fsync 落盘（此时崩溃信息已经安全），
+     * 再尽力同步双写 debug.log / 当前 session 日志。这样即使进程随后被系统杀掉，
+     * 崩溃堆栈与「最近日志」也不会丢。
+     */
+    fun writeCrashSync(
+        throwable: Throwable,
+        customMsg: String? = null,
+        recentLogs: List<String> = emptyList()
+    ) {
+        val dir = logDir ?: return
 
-            val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).apply { timeZone = this@LogFileManager.timeZone }
+        try {
+            val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
+                .apply { timeZone = this@LogFileManager.timeZone }
             val time = sdf.format(Date())
             val msg = customMsg ?: throwable.message ?: "Unknown Error"
-            val crashLine = "$time | [CRITICAL] CRASH: $msg\n$safeTrace\n"
 
-            synchronized(this) {
-                debugFile?.let {
-                    if (it.length() > MAX_DEBUG_FILE_SIZE) rotateDebugLog(it)
-                    it.appendText(crashLine)
+            val report = buildString {
+                append("========== CRASH ").append(time).append(" ==========\n")
+                append("原因: ").append(msg).append('\n')
+                append(sanitizeStackTrace(throwable)).append('\n')
+                if (recentLogs.isNotEmpty()) {
+                    append("---------- 最近日志（").append(recentLogs.size).append(" 条）----------\n")
+                    recentLogs.forEach { append(it).append('\n') }
                 }
-                // 【修复】崩溃路径同样要分卷，否则 session 日志会被异常撑爆
-                currentFile?.let {
-                    if (it.length() > MAX_SESSION_FILE_SIZE) rotateSessionLog(it)
-                    it.appendText(crashLine)
+                append("==================================================\n\n")
+            }
+            val bytes = report.toByteArray(Charsets.UTF_8)
+
+            // 1) 独立 crash.log：独占锁 + 直接写 + fsync，保证已经落在磁盘上
+            val file = crashFile ?: File(dir, CRASH_FILE_NAME)
+            synchronized(crashLock) {
+                try {
+                    if (file.length() > MAX_CRASH_FILE_SIZE) file.delete()
+                    FileOutputStream(file, true).use { out ->
+                        out.write(bytes)
+                        out.flush()
+                        out.fd.sync()
+                    }
+                } catch (t: Throwable) {
+                    Log.e(TAG, "write crash file failed", t)
                 }
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Write crash failed", e)
+
+            // 2) 尽力同步双写常规日志（即使这里卡住，上面的崩溃文件也已经落盘）
+            try {
+                synchronized(this) {
+                    debugFile?.let {
+                        if (it.length() > MAX_DEBUG_FILE_SIZE) rotateDebugLog(it)
+                        it.appendText(report)
+                    }
+                    currentFile?.let {
+                        if (it.length() > MAX_SESSION_FILE_SIZE) rotateSessionLog(it)
+                        it.appendText(report)
+                    }
+                }
+            } catch (_: Throwable) {
+            }
+        } catch (t: Throwable) {
+            Log.e(TAG, "writeCrashSync failed", t)
         }
+    }
+
+    /** 兼容旧调用：不带最近日志的崩溃写入 */
+    fun writeCrash(throwable: Throwable, customMsg: String? = null) {
+        writeCrashSync(throwable, customMsg)
+    }
+
+    /** 堆栈脱敏：密码 / token / IPv4 */
+    private fun sanitizeStackTrace(throwable: Throwable): String {
+        val sw = StringWriter()
+        throwable.printStackTrace(PrintWriter(sw))
+        var safe = passJsonRegex.replace(sw.toString()) { m -> "${m.groupValues[1]}***${m.groupValues[3]}" }
+        safe = passEqRegex.replace(safe) { m -> "${m.groupValues[1]}***" }
+        safe = tokenRegex.replace(safe, "mci_***")
+        safe = ipRegex.replace(safe, "*.*.*.*")
+        return safe
     }
 
     /** 业务层主动捕获的普通 Error 日志，强制双写 */

@@ -17,10 +17,17 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -49,12 +56,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import wasai.link.mcilm.top.link.MciLmNative
 import wasai.link.mcilm.top.service.LinkKeepAliveService
+import wasai.link.mcilm.top.ui.theme.DarkSurface
 import wasai.link.mcilm.top.ui.theme.McilmTheme
 import wasai.link.mcilm.top.ui.theme.NeonGreen
 import wasai.link.mcilm.top.viewmodel.AuthState
 import wasai.link.mcilm.top.viewmodel.*
 import wasai.link.mcilm.top.viewmodel.UiEvent
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppRoot(vm: MainViewModel = viewModel()) {
     val context = LocalContext.current
@@ -72,6 +81,9 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
 
     // 全局保活弹窗控制
     var showBackgroundDialog by remember { mutableStateOf(false) }
+
+    // 全局「运行日志」面板：每个页面都通过右下角的悬浮按钮打开
+    var showLogSheet by remember { mutableStateOf(false) }
 
     // 通知权限申请器
     val requestNotificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -319,6 +331,32 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
                         }
                         composable("feedback") {
                             FeedbackScreen(vm, onBack = { navController.popBackStack() })
+                        }
+                    }
+
+                    // 全局「运行日志」悬浮按钮：所有页面统一入口，样式与首页一致。
+                    // 房间内上移，避免压住聊天输入栏与底部操作行。
+                    SmallFloatingActionButton(
+                        onClick = { showLogSheet = true },
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(
+                                end = 16.dp,
+                                bottom = if (
+                                    (currentRoute == "host" || currentRoute == "room") &&
+                                    state.roomId != null
+                                ) 136.dp else 16.dp
+                            ),
+                        containerColor = DarkSurface,
+                        contentColor = NeonGreen,
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.Code, contentDescription = "运行日志")
+                    }
+
+                    if (showLogSheet) {
+                        ModalBottomSheet(onDismissRequest = { showLogSheet = false }) {
+                            McilmLogSheetContent()
                         }
                     }
 

@@ -30,8 +30,8 @@ android {
         applicationId = "wasai.link.mcilm.top"
         minSdk = 24
         targetSdk = 34
-        versionCode = 19
-        versionName = "1.6.5-beta"
+        versionCode = 20
+        versionName = "1.6.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -82,13 +82,15 @@ android {
             "String", "UPDATE_SOURCE",
             "\"${propOr("update.source", "auto")}\""
         )
+        // Gitee 仓库：https://gitee.com/wodeshijiewasai/Mcilm-link-Android
+        // 命名规则与 GitHub 一致：Release 资产同样按 "arm64" 过滤，tag/正文版本指令用法相同。
         buildConfigField(
             "String", "UPDATE_GITEE_OWNER",
-            "\"${propOr("update.gitee.owner", "")}\""
+            "\"${propOr("update.gitee.owner", "wodeshijiewasai")}\""
         )
         buildConfigField(
             "String", "UPDATE_GITEE_REPO",
-            "\"${propOr("update.gitee.repo", "")}\""
+            "\"${propOr("update.gitee.repo", "Mcilm-link-Android")}\""
         )
         buildConfigField(
             "String", "UPDATE_GITEE_API_BASE",

@@ -232,7 +232,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun onLibraryReady() {
         libraryReady = true
-        MciLmNative.linkSetLog(_uiState.value.isDevMode)
+        // 【优化】内核日志改为默认开启：此前只有开发者模式才 linkSetLog(true)，
+        // 正常使用时日志面板的「内核」Tab 永远是空的，出问题只能看到应用日志。
+        // 现在连接成功即开启；日志面板有 1000 条上限 + logRevision 增量刷新，
+        // 文件侧也有 5MB 分卷，不会无限堆积。
+        MciLmNative.linkSetLog(true)
         MciLmNative.linkSetEvent(true)
         observeEvents()
         if (_uiState.value.authState == AuthState.Authenticated) fetchPublicRooms()

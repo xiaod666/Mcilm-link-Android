@@ -25,6 +25,11 @@ object MciLmNative {
     val appLogHistory: MutableList<String> = Collections.synchronizedList(mutableListOf())
     val coreLogHistory: MutableList<String> = Collections.synchronizedList(mutableListOf())
 
+    // 内核日志连续重复行折叠用的状态
+    private val coreLogGate = Any()
+    private var lastCoreLog: String? = null
+    private var lastCoreRepeat = 0
+
     private val _logs = MutableSharedFlow<String>(extraBufferCapacity = 256, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     val logs: SharedFlow<String> = _logs.asSharedFlow()
 
@@ -138,9 +143,33 @@ object MciLmNative {
 
     external fun initLibrary(customPath: String): Int
 
+    /**
+     * 崩溃时附带的上下文日志：合并「应用」与「内核」两个环形缓冲，按时间排序后取最近 [max] 条。
+     * 两个 history 都是 "[HH:mm:ss]" 前缀，同一天内按字符串排序等价于按时间排序。
+     */
+    fun recentLogsForCrash(max: Int = 80): List<String> {
+        val merged = ArrayList<String>(appLogHistory.size + coreLogHistory.size)
+        synchronized(appLogHistory) { merged.addAll(appLogHistory) }
+        synchronized(coreLogHistory) { merged.addAll(coreLogHistory) }
+        return merged.sortedBy { it }.takeLast(max)
+    }
+
     @JvmStatic
     fun onNativeLog(msg: String) {
         Log.d(TAG, msg)
+
+        // 内核日志已默认开启，连续完全相同的行容易把面板和文件刷满：
+        // 只保留第 1 条，之后每 50 条补一条提醒仍在重复（不同内容不受影响）。
+        synchronized(coreLogGate) {
+            if (msg == lastCoreLog) {
+                lastCoreRepeat++
+                if (lastCoreRepeat % 50 != 0) return
+            } else {
+                lastCoreLog = msg
+                lastCoreRepeat = 0
+            }
+        }
+
         val sdf = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
         sdf.timeZone = timeZone
         val time = sdf.format(Date())

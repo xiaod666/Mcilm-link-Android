@@ -187,7 +187,6 @@ fun HostScreen(vm: MainViewModel, onBack: () -> Unit) {
 
     var checkingPerm by rememberSaveable { mutableStateOf(false) }
     var showPermissionDialog by rememberSaveable { mutableStateOf(false) }
-    var showLogSheet by rememberSaveable { mutableStateOf(false) }
     var showStopDialog by rememberSaveable { mutableStateOf(false) }
     var showQrDialog by rememberSaveable { mutableStateOf(false) }
     var showMemberDialog by rememberSaveable { mutableStateOf(false) }
@@ -453,7 +452,6 @@ fun HostScreen(vm: MainViewModel, onBack: () -> Unit) {
                         }
 
                         Row {
-                            TextButton(onClick = { showLogSheet = true }) { Text("运行日志") }
                             TextButton(onClick = { showStopDialog = true }) {
                                 Text(
                                     if (state.isHosting) "停止并解散房间" else "退出房间",
@@ -636,8 +634,8 @@ fun HostScreen(vm: MainViewModel, onBack: () -> Unit) {
                     Button(onClick = { trySubmit() }, modifier = Modifier.fillMaxWidth().height(50.dp), enabled = canSubmit) {
                         Text("启动房主")
                     }
-                    Spacer(Modifier.height(24.dp))
-                    TextButton(onClick = { showLogSheet = true }, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("查看运行日志") }
+                    // 给右下角悬浮的「运行日志」按钮留出空间，避免盖住启动按钮
+                    Spacer(Modifier.height(88.dp))
                 }
             }
         }
@@ -734,7 +732,6 @@ fun HostScreen(vm: MainViewModel, onBack: () -> Unit) {
         )
     }
 
-    if (showLogSheet) ModalBottomSheet(onDismissRequest = { showLogSheet = false }) { McilmLogSheetContent() }
     if (showPermissionDialog) AlertDialog(onDismissRequest = { showPermissionDialog = false }, title = { Text("权限不足") }, text = { Text("当前账号不支持开启公开房。") }, confirmButton = { TextButton(onClick = { showPermissionDialog = false }) { Text("知道了") } })
     if (showStopDialog) AlertDialog(
         onDismissRequest = { showStopDialog = false },

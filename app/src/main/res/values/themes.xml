@@ -1,5 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.Mcilmlinkc" parent="android:Theme.Material.Light.NoActionBar" />
+    <!--
+      深色启动主题：
+      - windowBackground 直接使用深色，避免冷启动 / 转场时先闪一帧白屏；
+      - 状态栏与导航栏同步为深色，避免 Compose 首帧前出现浅色系统栏；
+      - 系统栏图标统一为浅色（对应深色背景）。
+    -->
+    <style name="Theme.Mcilmlinkc" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/mcilm_dark_bg</item>
+        <item name="android:statusBarColor">@color/mcilm_dark_bg</item>
+        <item name="android:navigationBarColor">@color/mcilm_dark_bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:colorAccent">@color/mcilm_neon_green</item>
+        <item name="android:windowActivityTransitions">true</item>
+    </style>
 </resources>

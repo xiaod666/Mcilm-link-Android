@@ -19,7 +19,7 @@
 
 - **应用名称**：Mcilm-link 安卓版
 - **包名 Namespace**：`wasai.link.mcilm.top`（发布后不可更改）
-- **版本号**：`1.6.5-beta` (versionCode 19)
+- **版本号**：`1.6.6` (versionCode 20)
 - **ABI 支持**：仅支持 `arm64-v8a`（不提供 32 位 ARM、x86、x86_64 兜底）
 - **最低支持**：Android 7.0 (API 24)
 - **目标版本**：Android 14 (targetSdk 34)
@@ -123,7 +123,9 @@ wasai.link.mcilm.top
 - **大文件拦截**：大于 100MB 的文件在发送前会被拦截并提示，防止传输超时崩溃。
 
 ### 7. 日志系统与底层健壮性
-- **日志面板**：支持暂停滚动、分类 Tab（全部/应用/内核/报错）以及分享。
+- **日志面板**：支持暂停滚动、分类 Tab（全部/应用/内核/报错）以及分享；**所有页面右下角**都有同款的「运行日志」悬浮入口（房间内自动上移，避开聊天输入栏）。
+- **内核日志默认开启**：不再只有开发者模式才可见；连续完全相同的行会折叠（保留首条、之后每 50 条补一条），避免刷屏。
+- **崩溃日志强制落盘**：未捕获异常时先同步写入 `mcilmlinkandroid_crash.log` 并 `fsync`（独立文件 + 独立锁，不经过异步日志队列），同时附带最近 80 条应用 / 内核日志，写完才结束进程。
 - **JNI OOM 防护**：全局增加了严谨的 `GetStringUTFChars` 判空保护，拒绝底层空指针闪退。
 
 ## 五、 编译与运行指南
@@ -163,6 +165,27 @@ wasai.link.mcilm.top
 - [ ] 优化 WebView 渲染长公告时的性能表现。
 
 # MciLm-link安卓版 更新日志
+
+## [1.6.6] - 2026-11-27
+**核心主题：全站视觉统一（主题 / 配色 / 按钮 / 日志入口）、内核日志默认可见与崩溃日志强制落盘**
+
+### 🎨 UI 与视觉统一
+- **启动不再白闪**：启动主题由浅色 `Theme.Material.Light` 改为深色，`windowBackground` 直接使用 `#121212`；同时移除 `MainActivity` 外层默认浅色的 `MaterialTheme` 包装（主题统一由 `AppRoot` 的 `McilmTheme` + `Scaffold` 提供）。
+- **系统栏统一**：状态栏与导航栏颜色统一为应用背景色、图标固定浅色，冷启动到首帧不再跳色。
+- **配色补齐，消除"紫"**：`darkColorScheme` 补齐 `primaryContainer` / `secondaryContainer` / `surfaceVariant` / `outline` / `errorContainer` / `inverseSurface` 等容器与描边色，FilterChip、输入框、Snackbar 不再出现 Material3 默认的紫色。
+- **弹窗不再泛绿**：`surfaceTint` 由霓虹绿改为中性色。Material3 的 `AlertDialog` 与抬升表面按 `surface + tint` 叠加计算，之前所有弹窗都蒙着一层绿光；现在弹窗统一为 `#1E1E2E`，标题白、正文 `onSurfaceVariant`、圆角 28dp。
+- **圆角与层级统一**：新增 `Shapes`（4 / 8 / 12 / 16 / 28dp）并与现有卡片、弹层对齐；新增统一的分组标题组件（霓虹绿竖条 + 白色加粗标题），设置页四个分组与首页「公开房间」收敛为同一样式。
+- **按钮按语义分级**：登录主按钮由「透明底 + 绿边」改为实心主色；签到改用 `primaryContainer` 柔和填充（禁用态会正常变暗）；清理私有库改为 `errorContainer`、强制覆盖 Token 改为 `secondaryContainer`、反馈提交改用主题默认主色，去掉手写的假禁用态。
+- **日志入口全站统一**：新增全局「运行日志」悬浮按钮（首页同款：深色底 + 霓虹绿图标 + 12dp 圆角），在 `AppRoot` 统一渲染，**所有页面右下角都有**；房间内自动上移 136dp 避开聊天输入栏。首页 / 房主页原先各自的文字按钮与 FAB 已移除，设置页与反馈页底部补足留白避免按钮被遮挡。
+
+### 📋 日志与崩溃
+- **内核日志默认可见**：此前只有开发者模式才 `linkSetLog(true)`，日志面板「内核」Tab 在正常使用时永远是空的；现在内核就绪即开启。
+- **重复日志折叠**：内核日志中连续完全相同的行只保留首条、之后每 50 条补一条，避免心跳类日志刷爆面板与文件（不同内容的日志一条不丢）。
+- **崩溃日志强制落盘**：新增崩溃专用同步写 `writeCrashSync()`，不经过日志 Channel、使用独立锁直接写 `mcilmlinkandroid_crash.log` 并 `fsync`，写完才把异常交回系统处理器结束进程。崩溃报告包含脱敏堆栈与**最近 80 条应用 / 内核日志**（取自内存环形缓冲，异步队列里尚未落盘的内容也能带上）；同时尽力同步双写 `debug.log` 和会话日志，`crash.log` 超过 2MB 自动清空重来。
+
+### 🔧 构建与配置
+- **Gitee 更新源**：新增默认 Gitee 仓库 `wodeshijiewasai/Mcilm-link-Android`（与 GitHub 同名规则，Release 资产同样按 `arm64` 过滤）；`auto` 模式下 Gitee 优先、异常或版本不新时回退 GitHub。
+- `versionName` 升级至 `1.6.6`，`versionCode` 升级至 `20`。
 
 ## [1.6.5-beta] - 2026-11-22
 **核心主题：复查修复（构建阻断 / 导航竞态 / 重复订阅）与后台保活、断点续传、日志落盘加固**

@@ -388,19 +388,22 @@ private fun TraditionalLoginView(
             onClick = { submitLogin() },
             enabled = !state.isLoading && agreePrivacy,
             modifier = Modifier.fillMaxWidth().height(52.dp),
-            shape = RoundedCornerShape(12.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Color.Transparent,
-                contentColor = NeonGreen,
-                disabledContainerColor = Color.Transparent,
-                disabledContentColor = Color.Gray
-            ),
-            border = BorderStroke(1.dp, if (!state.isLoading && agreePrivacy) NeonGreen else Color.DarkGray)
+            // 主操作改为实心主色：之前是透明底 + 绿边，比次级按钮还弱，
+            // 也和首页 / 房间页的实心绿色 CTA 不一致
+            shape = RoundedCornerShape(12.dp)
         ) {
             if (state.isLoading) {
-                CircularProgressIndicator(modifier = Modifier.size(24.dp), color = NeonGreen, strokeWidth = 2.dp)
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    strokeWidth = 2.dp
+                )
                 Spacer(Modifier.width(12.dp))
-                Text("登录中...", fontWeight = FontWeight.Bold, color = NeonGreen)
+                Text(
+                    "登录中...",
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimary
+                )
             } else {
                 Text("登录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             }

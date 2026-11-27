@@ -156,16 +156,13 @@ fun FeedbackScreen(vm: MainViewModel, onBack: () -> Unit) {
                         },
                         enabled = content.trim().length in 5..1000 && !state.isLoading,
                         modifier = Modifier.fillMaxWidth().height(50.dp),
-                        shape = RoundedCornerShape(25.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = NeonGreen,
-                            contentColor = Color.Black,
-                            disabledContainerColor = NeonGreen.copy(alpha = 0.15f),
-                            disabledContentColor = Color.LightGray.copy(alpha = 0.5f)
-                        )
+                        // 用主题默认主色按钮：禁用态交给 Material3（之前手写的亮绿禁用态看起来仍像可点）
+                        shape = RoundedCornerShape(25.dp)
                     ) {
                         Text("提 交", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     }
+                    // 给右下角的全局「运行日志」悬浮按钮留出空间
+                    Spacer(Modifier.height(88.dp))
                 }
             } else {
                 if (state.feedbackList.isEmpty()) {

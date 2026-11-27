@@ -44,6 +44,30 @@ fun formatPlayTime(seconds: Long): String {
     return parts.joinToString(" ")
 }
 
+// ==================== 分组标题（各页面统一外观） ====================
+
+/**
+ * 统一的分组标题：左侧 4dp 霓虹绿竖条 + 白色加粗标题。
+ * 之前首页用「竖条 + 白字」、设置页用「纯绿字」，同一层级出现两种样式，这里收敛成一种。
+ */
+@Composable
+fun McilmSectionTitle(title: String, modifier: Modifier = Modifier) {
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier
+                .size(width = 4.dp, height = 16.dp)
+                .background(NeonGreen, androidx.compose.foundation.shape.RoundedCornerShape(2.dp))
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            title,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = Color.White
+        )
+    }
+}
+
 // ==================== 日志查看器 ====================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
